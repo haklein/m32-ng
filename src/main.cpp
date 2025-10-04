@@ -19,7 +19,10 @@ static const int steps_per_detent = 1;  // tune after testing
                                         //
                                         //
 void encoder_init(int pinA, int pinB) {
-  ESP32Encoder::useInternalWeakPullResistors = puType::up;   // optional
+  pinMode(pinA,INPUT_PULLUP);
+  pinMode(pinB,INPUT_PULLUP);
+
+  // ESP32Encoder::useInternalWeakPullResistors = puType::up;   // optional
   // Choose one:
   rotaryEncoder.attachHalfQuad(pinA, pinB);     // preferred for UI detents
   // enc.attachFullQuad(pinA, pinB);  // higher resolution if needed
@@ -28,9 +31,14 @@ void encoder_init(int pinA, int pinB) {
 }
 
 
- static auto tick_get_cb = []() -> uint32_t {
+/* static auto tick_get_cb = []() -> uint32_t {
    return esp_timer_get_time() / 1000ULL;
  };
+*/
+
+extern "C" uint32_t tick_get_cb(void) {
+  return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
 
 
 static LGFX gfx;
@@ -63,7 +71,7 @@ void M32Pocket_hal_init() {
 
 static void lvgl_encoder_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   const int64_t raw = rotaryEncoder.getCount();
-  Log.traceln("encoder read CB: %u",raw);
+  Log.verboseln("encoder read CB: %u",raw);
   const int diff_counts = (int)(raw - last_raw);
   last_raw = raw;
 
@@ -85,7 +93,7 @@ void my_disp_flush(lv_display_t* display, const lv_area_t* area, unsigned char* 
 
   gfx.setAddrWindow(area->x1, area->y1, w, h);
   gfx.pushPixelsDMA((uint16_t *)px_map, w * h, true);
-
+  //gfx.endWrite();
   lv_display_flush_ready(display);
 }
 
@@ -176,7 +184,7 @@ void setup()
   Log.verboseln("HAL init");
   M32Pocket_hal_init();
 
-  Log.verboseln("Rotart encoder init");
+  Log.verboseln("Rotary encoder init");
   pinMode(PIN_ROT_BTN, INPUT_PULLUP);
   pinMode(0, INPUT_PULLUP);
   encoder_init(PIN_ROT_DT, PIN_ROT_CLK);
@@ -187,6 +195,7 @@ void setup()
 
   Log.verboseln("LGVL init");
   lv_init();
+  lv_tick_set_cb(tick_get_cb);
 
   Log.verboseln("LGVL create indevs");
   indev_encoder = lv_indev_create();
@@ -202,16 +211,6 @@ void setup()
   lv_display_set_buffers(lvDisplay, lvBuffer, nullptr, lvBufferSize, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
 /*
-  // Create encoder indev
-  indev_encoder = lv_indev_create();
-  lv_indev_set_type(indev_encoder, LV_INDEV_TYPE_ENCODER);
-//  lv_indev_set_read_cb(indev_encoder, encoder_read_cb);
-
-  // Create keypad indev for secondary button
-  indev_keypad = lv_indev_create();
-  lv_indev_set_type(indev_keypad, LV_INDEV_TYPE_KEYPAD);
- // lv_indev_set_read_cb(indev_keypad, keypad_read_cb);
-
   // Group to navigate with encoder
   lv_group_t * g = lv_group_create();
   lv_indev_set_group(indev_encoder, g);
@@ -231,10 +230,8 @@ void setup()
 /* ------------------------------ Loop -------------------------------- */
 void loop()
 {
-      lv_task_handler();
-    lv_tick_inc(5);
+    lv_timer_handler();
     delay(5);
 }
-
 
 
