@@ -3,6 +3,9 @@
 
 #include <main.h>
 #include <Arduino.h>
+
+#include <ArduinoLog.h>
+
 #include <lvgl.h>
 #include <LovyanGFX.hpp>
 
@@ -60,6 +63,7 @@ void M32Pocket_hal_init() {
 
 static void lvgl_encoder_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   const int64_t raw = rotaryEncoder.getCount();
+  Log.traceln("encoder read CB: %u",raw);
   const int diff_counts = (int)(raw - last_raw);
   last_raw = raw;
 
@@ -166,23 +170,30 @@ void setup()
 {
   Serial.begin(115200);
   delay(2000);
-  Serial.println("[INFO] M32 NG - Startup");
+  Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+  Log.verboseln("M32 NG - Startup");
 
+  Log.verboseln("HAL init");
   M32Pocket_hal_init();
 
+  Log.verboseln("Rotart encoder init");
   pinMode(PIN_ROT_BTN, INPUT_PULLUP);
   pinMode(0, INPUT_PULLUP);
   encoder_init(PIN_ROT_DT, PIN_ROT_CLK);
 
+  Log.verboseln("LovyanGFX init");
   gfx.begin();
   gfx.setRotation(3);
 
+  Log.verboseln("LGVL init");
   lv_init();
 
+  Log.verboseln("LGVL create indevs");
   indev_encoder = lv_indev_create();
   lv_indev_set_type(indev_encoder, LV_INDEV_TYPE_ENCODER);
   lv_indev_set_read_cb(indev_encoder, lvgl_encoder_read_cb);
 
+  Log.verboseln("LGVL create display");
   static auto *lvDisplay = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
   lv_display_set_rotation(lvDisplay, LV_DISPLAY_ROTATION_90);
   //lv_display_set_color_format(lvDisplay, LV_COLOR_FORMAT_RGB565);
@@ -212,6 +223,7 @@ void setup()
     lv_label_set_text( label, "Hello Arduino, I'm LVGL!" );
     lv_obj_align( label, LV_ALIGN_CENTER, 0, 0 );
     */
+  Log.verboseln("LGVL main UI");
   main_UI();
 
 }
