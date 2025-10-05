@@ -18,6 +18,13 @@ static int steps_remainder = 0;          // for partial steps
 static const int steps_per_detent = 1;  // tune after testing
                                         //
                                         //
+void my_print( lv_log_level_t level, const char * buf )
+{
+    LV_UNUSED(level);
+    Serial.print(buf);
+    Serial.flush();
+}
+
 void encoder_init(int pinA, int pinB) {
   pinMode(pinA,INPUT_PULLUP);
   pinMode(pinB,INPUT_PULLUP);
@@ -196,11 +203,7 @@ void setup()
   Log.verboseln("LGVL init");
   lv_init();
   lv_tick_set_cb(tick_get_cb);
-
-  Log.verboseln("LGVL create indevs");
-  indev_encoder = lv_indev_create();
-  lv_indev_set_type(indev_encoder, LV_INDEV_TYPE_ENCODER);
-  lv_indev_set_read_cb(indev_encoder, lvgl_encoder_read_cb);
+  // lv_log_register_print_cb( my_print );
 
   Log.verboseln("LGVL create display");
   static auto *lvDisplay = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
@@ -209,6 +212,17 @@ void setup()
   lv_display_set_color_format(lvDisplay, LV_COLOR_FORMAT_RGB565);
   lv_display_set_flush_cb(lvDisplay, my_disp_flush);
   lv_display_set_buffers(lvDisplay, lvBuffer, nullptr, lvBufferSize, LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+
+  Log.verboseln("LVGL group creation");
+  lv_group_t * g = lv_group_create();
+  lv_group_set_default(g);
+
+  Log.verboseln("LGVL create indevs");
+  indev_encoder = lv_indev_create();
+  lv_indev_set_type(indev_encoder, LV_INDEV_TYPE_ENCODER);
+  lv_indev_set_read_cb(indev_encoder, lvgl_encoder_read_cb);
+  lv_indev_set_group(indev_encoder, g);
 
 /*
   // Group to navigate with encoder
