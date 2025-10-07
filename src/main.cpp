@@ -92,6 +92,13 @@ static void lvgl_encoder_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
                   : LV_INDEV_STATE_PRESSED;
 }
 
+static void keypad_read_cb(lv_indev_t *indev, lv_indev_data_t *d) {
+  static uint32_t last_key = LV_KEY_ESC;
+  bool pressed = digitalRead(PIN_BUTTON) == LOW;  // active low
+  d->key = last_key;
+  d->state = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
 void my_disp_flush(lv_display_t* display, const lv_area_t* area, unsigned char* px_map) {
   uint32_t w = lv_area_get_width(area);
   uint32_t h = lv_area_get_height(area);
@@ -223,6 +230,10 @@ void setup()
   lv_indev_set_type(indev_encoder, LV_INDEV_TYPE_ENCODER);
   lv_indev_set_read_cb(indev_encoder, lvgl_encoder_read_cb);
   lv_indev_set_group(indev_encoder, g);
+
+  indev_keypad = lv_indev_create();
+  lv_indev_set_type(indev_keypad, LV_INDEV_TYPE_KEYPAD);
+  lv_indev_set_read_cb(indev_keypad, keypad_read_cb);
 
 /*
   // Group to navigate with encoder
