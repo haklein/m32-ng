@@ -160,14 +160,16 @@ void PocketKeyInput::poll_task_body()
                       KeyEvent::BUTTON_AUX_SHORT, KeyEvent::BUTTON_AUX_LONG);
 
         // ── Touch left ────────────────────────────────────────────────────────
-        bool touch_l = touchRead(PIN_TOUCH_LEFT) < touch_threshold_;
+        // ESP32-S3 touch sensor returns HIGHER values when touched (opposite of
+        // original ESP32), so compare > threshold.
+        bool touch_l = touchRead(PIN_TOUCH_LEFT) > touch_threshold_;
         if (touch_l != touch_left_prev) {
             push(touch_l ? KeyEvent::TOUCH_LEFT_DOWN : KeyEvent::TOUCH_LEFT_UP);
             touch_left_prev = touch_l;
         }
 
         // ── Touch right ───────────────────────────────────────────────────────
-        bool touch_r = touchRead(PIN_TOUCH_RIGHT) < touch_threshold_;
+        bool touch_r = touchRead(PIN_TOUCH_RIGHT) > touch_threshold_;
         if (touch_r != touch_right_prev) {
             push(touch_r ? KeyEvent::TOUCH_RIGHT_DOWN : KeyEvent::TOUCH_RIGHT_UP);
             touch_right_prev = touch_r;

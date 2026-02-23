@@ -91,6 +91,11 @@ void MorseDecoder::set_transmitting(bool t)
     transmitting = t;
 }
 
+void MorseDecoder::set_decode_threshold(unsigned long ms)
+{
+    decode_threshold = ms;
+}
+
 bool MorseDecoder::is_decode_expired() const
 {
     if (last_input_time == 0 || transmitting) {

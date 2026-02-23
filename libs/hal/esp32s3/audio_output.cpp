@@ -44,7 +44,7 @@ void PocketAudioOutput::begin()
 
     // ── 5. Enable codec PLL (now that BCLK is present) ──────────────────────
     codec_.setPLLPower(true);
-    delay(10);  // allow PLL to lock
+    delay(20);  // allow PLL to lock (20 ms per reference design)
 
     codec_.setNDACVal(4);  codec_.setNDACPower(true);
     codec_.setMDACVal(4);  codec_.setMDACPower(true);
@@ -54,6 +54,7 @@ void PocketAudioOutput::begin()
     codec_.setWordLength(16);
     codec_.enableDAC();
     codec_.setDACVolume(-2.0f, -2.0f);  // slight headroom below clipping
+    codec_.setDACMute(false);           // default after reset is muted
 
     codec_enable_outputs();
 
@@ -75,13 +76,20 @@ void PocketAudioOutput::codec_init_clocking()
 
 void PocketAudioOutput::codec_enable_outputs()
 {
-    // Headphone amp — used with both wired headset and speaker path.
+    // Headphone amp — used with wired headset.
+    // HPLGAIN/HPRGAIN mute bit (BIT(2)) defaults to 0 = muted after reset;
+    // setHeadphoneMute(false) must be called explicitly to unmute.
     codec_.enableHeadphoneAmp();
     codec_.setHeadphoneVolume(-6.0f, -6.0f);
+    codec_.setHeadphoneGain(0.0f, 0.0f);
+    codec_.setHeadphoneMute(false);
 
     // Speaker amp — class-D via HP driver on Pocket board.
+    // SPLGAIN mute bit likewise defaults to muted.
     codec_.enableSpeakerAmp();
+    codec_.setSpeakerGain(6.0f);
     codec_.setSpeakerVolume(-6.0f);
+    codec_.setSpeakerMute(false);
 }
 
 // ── IAudioOutput ──────────────────────────────────────────────────────────────

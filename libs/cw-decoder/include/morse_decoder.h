@@ -46,6 +46,7 @@ public:
     void set_transmitting(bool transmitting);
 
     bool is_decode_expired() const;
+    void set_decode_threshold(unsigned long ms);
 
 private:
     bool transmitting = false;

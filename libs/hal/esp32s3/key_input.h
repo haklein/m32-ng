@@ -25,9 +25,10 @@
 class PocketKeyInput : public IKeyInput
 {
 public:
-    // touch_threshold: raw touchRead() value below which a strip counts as pressed.
-    // Tune to hardware; ESP32-S3 capacitive touch counts are hardware-dependent.
-    explicit PocketKeyInput(uint32_t touch_threshold = 40000);
+    // touch_threshold: raw touchRead() value above which a strip counts as pressed.
+    // On ESP32-S3 the touch sensor returns HIGHER values when touched.
+    // Typical idle: 38000–42000; typical touched: 46000–52000; default 44000.
+    explicit PocketKeyInput(uint32_t touch_threshold = 44000);
     ~PocketKeyInput() override;
 
     bool poll(KeyEvent& out) override;
