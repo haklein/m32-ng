@@ -1,0 +1,6 @@
+{
+  "name": "hal-esp32s3",
+  "version": "0.0.1",
+  "description": "Pocket (ESP32-S3) HAL implementations: I2S sidetone, TLV320 codec, GPIO key input",
+  "platforms": ["espressif32"]
+}

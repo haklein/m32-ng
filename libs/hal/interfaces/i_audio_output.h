@@ -1,0 +1,34 @@
+#pragma once
+
+#include <cstdint>
+
+// Sidetone and keyed-output audio abstraction.
+//
+// Pocket target: I2S -> TLV320AIC3100 codec (haklein/cw-i2s-sidetone +
+//                haklein/tlv320aic31xx), speaker/headphone auto-switching.
+// M5Core2 target: I2S -> internal Class-D amp via AXP192 SPK_EN.
+class IAudioOutput
+{
+public:
+    virtual ~IAudioOutput() = default;
+
+    // Initialise hardware; must be called once before any other method.
+    // On Pocket: codec I2C setup must precede I2S start (BCLK feeds codec PLL).
+    virtual void begin() = 0;
+
+    // Start tone at given frequency in Hz (ADSR attack applied).
+    virtual void tone_on(uint16_t frequency_hz) = 0;
+
+    // Stop tone (ADSR release applied).
+    virtual void tone_off() = 0;
+
+    // Set output volume; 0 = mute, 10 = maximum.
+    virtual void set_volume(uint8_t level_0_to_10) = 0;
+
+    // Configure ADSR envelope for the sidetone sine wave.
+    virtual void set_adsr(float attack_s, float decay_s,
+                          float sustain_level, float release_s) = 0;
+
+    // Power down audio hardware before deep sleep.
+    virtual void suspend() = 0;
+};

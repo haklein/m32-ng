@@ -1,0 +1,6 @@
+{
+  "name": "hal-native",
+  "version": "0.0.1",
+  "description": "Native (Linux) HAL implementations: ALSA PCM sidetone, ALSA MIDI key input",
+  "platforms": ["native"]
+}

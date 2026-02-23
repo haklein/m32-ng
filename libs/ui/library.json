@@ -1,0 +1,7 @@
+{
+  "name": "ui",
+  "version": "0.1.0",
+  "description": "LVGL UI components for the Morserino-32-NG trainer",
+  "frameworks": ["*"],
+  "platforms": ["*"]
+}
