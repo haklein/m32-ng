@@ -175,7 +175,7 @@ static void on_letter_decoded(const std::string& letter)
     } else if (s_active_mode == ActiveMode::ECHO) {
         s_trainer->symbol_received(letter);
         if (s_echo_rcvd_lbl) {
-            if      (letter == "<err>") { if (!s_echo_typed.empty()) s_echo_typed.pop_back(); }
+            if      (letter == "<err>") { /* <HH> resets whole word */ s_echo_typed.clear(); }
             else if (letter != " ")     { s_echo_typed += letter; }
             lv_label_set_text(s_echo_rcvd_lbl, s_echo_typed.c_str());
         }

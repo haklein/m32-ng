@@ -45,9 +45,9 @@ void MorseTrainer::symbol_received(const std::string& symbol)
 {
     last_keyer_received_ = millis_cb_();
     if (symbol == "<err>") {
-        if (!received_phrase_.empty()) {
-            received_phrase_.pop_back();
-        }
+        // <HH> resets the whole received word, not just the last character
+        // if (!received_phrase_.empty()) received_phrase_.pop_back();
+        received_phrase_.clear();
     } else {
         received_phrase_ += symbol;
         if (received_phrase_ == phrase_plain_) {
