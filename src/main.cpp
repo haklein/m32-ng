@@ -6,7 +6,7 @@
 //   SMOKE_TEST  (env:pocketwroom_smoke): exercises display, audio, and all
 //               key/paddle/encoder/touch inputs.  Events logged to Serial.
 //   default     (env:pocketwroom): full multi-screen LVGL UI with CW keyer,
-//               CW generator, and settings screen.
+//               CW generator, echo trainer, and settings screen.
 //
 // Flash and open Serial at 115200.
 
@@ -219,16 +219,16 @@ void loop()
 #else // Full multi-screen UI
 // ── Full UI ───────────────────────────────────────────────────────────────────
 //
-// Screens: Main Menu → [CW Keyer | CW Generator | Settings]
+// Screens: Main Menu → [CW Keyer | CW Generator | Echo Trainer | Settings]
 //
 // Controls:
-//   Enc CW/CCW      — scroll menu / ±1 WPM in keyer|generator
+//   Enc CW/CCW      — scroll menu / ±1 WPM in keyer|generator|echo
 //   Enc short       — select / edit control in settings
 //   Enc long        — back to previous screen
 //   Aux short       — pause/resume in generator
 //   Aux long        — return to main menu
 //   Paddle L/Touch L — DIT    Paddle R/Touch R — DAH
-//   Straight key    — straight key (keyer screen)
+//   Straight key    — straight key (keyer + echo screens)
 
 #ifdef BOARD_POCKETWROOM
 
@@ -249,20 +249,20 @@ struct AppSettings {
 static AppSettings s_settings;
 
 // ── Active CW mode ────────────────────────────────────────────────────────────
-enum class ActiveMode { NONE, KEYER, GENERATOR };
+enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── Hardware ──────────────────────────────────────────────────────────────────
 static PocketAudioOutput* s_audio = nullptr;
 static PocketKeyInput*    s_keys  = nullptr;
 
-// ── CW engine (keyer mode) ────────────────────────────────────────────────────
+// ── CW engine (keyer + echo modes) ───────────────────────────────────────────
 static PaddleCtl*    s_paddle      = nullptr;
 static IambicKeyer*  s_keyer       = nullptr;
 static MorseDecoder* s_decoder     = nullptr;
 static uint32_t      s_straight_t0 = 0;
 
-// ── Trainer (generator mode) ──────────────────────────────────────────────────
+// ── Trainer (generator + echo modes) ─────────────────────────────────────────
 static MorseTrainer*   s_trainer    = nullptr;
 static TextGenerators* s_gen        = nullptr;
 static std::mt19937    s_rng;
@@ -272,6 +272,12 @@ static bool            s_gen_paused = false;
 static CWTextField* s_keyer_tf  = nullptr;
 static CWTextField* s_gen_tf    = nullptr;
 static StatusBar*   s_active_sb = nullptr;
+
+// ── Echo trainer widgets (set/cleared with echo screen) ──────────────────────
+static lv_obj_t*   s_echo_target_lbl = nullptr;   // phrase being played
+static lv_obj_t*   s_echo_rcvd_lbl   = nullptr;   // chars received so far
+static lv_obj_t*   s_echo_result_lbl = nullptr;   // "OK" / "ERR"
+static std::string s_echo_typed;                   // mirrors trainer's received_phrase_
 
 // ── Screen stack & navigation ─────────────────────────────────────────────────
 static ScreenStack s_stack;
@@ -288,6 +294,7 @@ static lv_group_t* s_settings_group = nullptr;
 static lv_obj_t* build_main_menu();
 static lv_obj_t* build_keyer_screen();
 static lv_obj_t* build_generator_screen();
+static lv_obj_t* build_echo_screen();
 static lv_obj_t* build_settings_screen();
 static void      apply_settings();
 static void      route(KeyEvent ev);
@@ -336,9 +343,18 @@ static void on_lever_state(LeverState state)
 
 static void on_letter_decoded(const std::string& letter)
 {
-    if (!s_keyer_tf) return;
-    if (letter == " ") s_keyer_tf->next_word();
-    else               s_keyer_tf->add_string(letter);
+    if (s_active_mode == ActiveMode::KEYER) {
+        if (!s_keyer_tf) return;
+        if (letter == " ") s_keyer_tf->next_word();
+        else               s_keyer_tf->add_string(letter);
+    } else if (s_active_mode == ActiveMode::ECHO) {
+        s_trainer->symbol_received(letter);
+        if (s_echo_rcvd_lbl) {
+            if      (letter == "<err>") { if (!s_echo_typed.empty()) s_echo_typed.pop_back(); }
+            else if (letter != " ")     { s_echo_typed += letter; }
+            lv_label_set_text(s_echo_rcvd_lbl, s_echo_typed.c_str());
+        }
+    }
 }
 
 // ── Propagate settings to all engine objects ──────────────────────────────────
@@ -364,7 +380,7 @@ static lv_obj_t* build_main_menu()
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
     lv_obj_t* list = lv_list_create(scr);
-    lv_obj_set_size(list, SCREEN_W - 40, SCREEN_H - 50);
+    lv_obj_set_size(list, SCREEN_W - 40, SCREEN_H - 44);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 10);
 
     if (s_menu_group) lv_group_del(s_menu_group);
@@ -392,6 +408,7 @@ static lv_obj_t* build_main_menu()
             enter_cb = []() {
                 s_active_mode = ActiveMode::GENERATOR;
                 s_gen_paused  = false;
+                s_trainer->set_state(MorseTrainer::TrainerState::Player);
                 s_trainer->set_playing();
                 lv_indev_set_group(s_enc_indev, nullptr);
             };
@@ -400,6 +417,24 @@ static lv_obj_t* build_main_menu()
                 s_trainer->set_idle();
                 s_audio->tone_off();
                 delete s_gen_tf; s_gen_tf = nullptr;
+                delete s_active_sb; s_active_sb = nullptr;
+            };
+        } else if (idx == 2) {
+            ns = build_echo_screen();
+            enter_cb = []() {
+                s_active_mode = ActiveMode::ECHO;
+                s_trainer->set_state(MorseTrainer::TrainerState::Echo);
+                s_trainer->set_playing();
+                lv_indev_set_group(s_enc_indev, nullptr);
+            };
+            leave_cb = []() {
+                s_active_mode = ActiveMode::NONE;
+                s_trainer->set_idle();
+                s_trainer->set_state(MorseTrainer::TrainerState::Player);
+                s_audio->tone_off();
+                s_echo_target_lbl = nullptr;
+                s_echo_rcvd_lbl   = nullptr;
+                s_echo_result_lbl = nullptr;
                 delete s_active_sb; s_active_sb = nullptr;
             };
         } else {
@@ -415,11 +450,12 @@ static lv_obj_t* build_main_menu()
     };
 
     static const struct { const char* icon; const char* label; } items[] = {
-        { LV_SYMBOL_AUDIO,    "CW Keyer"     },
-        { LV_SYMBOL_PLAY,     "CW Generator" },
-        { LV_SYMBOL_SETTINGS, "Settings"     },
+        { LV_SYMBOL_AUDIO,    "CW Keyer"      },
+        { LV_SYMBOL_PLAY,     "CW Generator"  },
+        { LV_SYMBOL_LOOP,     "Echo Trainer"  },
+        { LV_SYMBOL_SETTINGS, "Settings"      },
     };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_group_add_obj(s_menu_group, btn);
         lv_obj_add_event_cb(btn, push_screen, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -460,6 +496,47 @@ static lv_obj_t* build_generator_screen()
     s_gen_tf = new CWTextField(scr);
     lv_obj_set_pos(s_gen_tf->obj(), 4, CONTENT_Y + 2);
     lv_obj_set_size(s_gen_tf->obj(), SCREEN_W - 8, SCREEN_H - CONTENT_Y - 6);
+
+    return scr;
+}
+
+// ── Screen: Echo Trainer ──────────────────────────────────────────────────────
+static lv_obj_t* build_echo_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr);
+    sb->set_mode("Echo Trainer");
+    sb->set_wpm(s_settings.wpm);
+    s_active_sb = sb;
+
+    // Divide remaining height into thirds: Sent / Rcvd / Result
+    const lv_coord_t ROW_H  = (SCREEN_H - CONTENT_Y) / 3;  // ~49 px
+    const lv_coord_t ROW1_Y = CONTENT_Y + 4;
+    const lv_coord_t ROW2_Y = CONTENT_Y + ROW_H + 4;
+
+    lv_obj_t* l1 = lv_label_create(scr);
+    lv_label_set_text(l1, "Sent:");
+    lv_obj_set_pos(l1, 8, ROW1_Y + 8);
+
+    s_echo_target_lbl = lv_label_create(scr);
+    lv_label_set_text(s_echo_target_lbl, "...");
+    lv_obj_set_pos(s_echo_target_lbl, 60, ROW1_Y + 6);
+    lv_obj_set_width(s_echo_target_lbl, SCREEN_W - 68);
+
+    lv_obj_t* l2 = lv_label_create(scr);
+    lv_label_set_text(l2, "Rcvd:");
+    lv_obj_set_pos(l2, 8, ROW2_Y + 8);
+
+    s_echo_rcvd_lbl = lv_label_create(scr);
+    lv_label_set_text(s_echo_rcvd_lbl, "");
+    lv_obj_set_pos(s_echo_rcvd_lbl, 60, ROW2_Y + 6);
+    lv_obj_set_width(s_echo_rcvd_lbl, SCREEN_W - 68);
+
+    s_echo_result_lbl = lv_label_create(scr);
+    lv_label_set_text(s_echo_result_lbl, "");
+    lv_obj_align(s_echo_result_lbl, LV_ALIGN_BOTTOM_MID, 0, -6);
 
     return scr;
 }
@@ -554,16 +631,18 @@ static void route(KeyEvent ev)
     switch (ev) {
         case KeyEvent::ENCODER_CW:
             s_enc_diff++;
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::GENERATOR) {
+            if (s_active_mode == ActiveMode::KEYER  ||
+                s_active_mode == ActiveMode::GENERATOR ||
+                s_active_mode == ActiveMode::ECHO) {
                 s_settings.wpm = std::min(s_settings.wpm + 1, 40);
                 apply_settings();
             }
             break;
         case KeyEvent::ENCODER_CCW:
             s_enc_diff--;
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::GENERATOR) {
+            if (s_active_mode == ActiveMode::KEYER  ||
+                s_active_mode == ActiveMode::GENERATOR ||
+                s_active_mode == ActiveMode::ECHO) {
                 s_settings.wpm = std::max(s_settings.wpm - 1, 5);
                 apply_settings();
             }
@@ -591,32 +670,43 @@ static void route(KeyEvent ev)
             break;
 
         // Paddle and touch strips both drive the iambic paddle.
+        // In ECHO mode, any DOWN event also tames the receive timeout.
         case KeyEvent::PADDLE_DIT_DOWN:
         case KeyEvent::TOUCH_LEFT_DOWN:
-            if (s_active_mode == ActiveMode::KEYER) s_paddle->setDotPushed(true);
+            if (s_active_mode == ActiveMode::KEYER ||
+                s_active_mode == ActiveMode::ECHO)  s_paddle->setDotPushed(true);
+            if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
             break;
         case KeyEvent::PADDLE_DIT_UP:
         case KeyEvent::TOUCH_LEFT_UP:
-            if (s_active_mode == ActiveMode::KEYER) s_paddle->setDotPushed(false);
+            if (s_active_mode == ActiveMode::KEYER ||
+                s_active_mode == ActiveMode::ECHO)  s_paddle->setDotPushed(false);
             break;
         case KeyEvent::PADDLE_DAH_DOWN:
         case KeyEvent::TOUCH_RIGHT_DOWN:
-            if (s_active_mode == ActiveMode::KEYER) s_paddle->setDashPushed(true);
+            if (s_active_mode == ActiveMode::KEYER ||
+                s_active_mode == ActiveMode::ECHO)  s_paddle->setDashPushed(true);
+            if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
             break;
         case KeyEvent::PADDLE_DAH_UP:
         case KeyEvent::TOUCH_RIGHT_UP:
-            if (s_active_mode == ActiveMode::KEYER) s_paddle->setDashPushed(false);
+            if (s_active_mode == ActiveMode::KEYER ||
+                s_active_mode == ActiveMode::ECHO)  s_paddle->setDashPushed(false);
             break;
 
         case KeyEvent::STRAIGHT_DOWN:
-            if (s_active_mode == ActiveMode::KEYER) {
+            if (s_active_mode == ActiveMode::KEYER ||
+                s_active_mode == ActiveMode::ECHO) {
                 s_straight_t0 = (uint32_t)hw_millis();
                 s_audio->tone_on(s_settings.freq_hz);
                 s_decoder->set_transmitting(true);
+                if (s_active_mode == ActiveMode::ECHO)
+                    s_trainer->tame_echo_timeout();
             }
             break;
         case KeyEvent::STRAIGHT_UP:
-            if (s_active_mode == ActiveMode::KEYER) {
+            if (s_active_mode == ActiveMode::KEYER ||
+                s_active_mode == ActiveMode::ECHO) {
                 uint32_t dur = (uint32_t)hw_millis() - s_straight_t0;
                 unsigned long dit = 1200u / (unsigned long)s_settings.wpm;
                 s_audio->tone_off();
@@ -631,8 +721,6 @@ static void route(KeyEvent ev)
     }
 }
 
-#endif // BOARD_POCKETWROOM
-
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 void setup()
@@ -644,7 +732,6 @@ void setup()
 
     display_init();
 
-#ifdef BOARD_POCKETWROOM
     // Splash while peripherals init
     lv_obj_t* splash = lv_label_create(lv_screen_active());
     lv_label_set_text(splash, "M32 NG");
@@ -690,12 +777,28 @@ void setup()
         },
         []() -> std::string {
             std::string phrase = s_gen->random_word();
-            if (s_gen_tf) s_gen_tf->add_string(phrase + " ");
+            if (s_gen_tf)          s_gen_tf->add_string(phrase + " ");
+            if (s_echo_target_lbl) {
+                s_echo_typed.clear();
+                if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
+                if (s_echo_result_lbl) lv_label_set_text(s_echo_result_lbl, "");
+                lv_label_set_text(s_echo_target_lbl, phrase.c_str());
+            }
             return phrase;
         },
         hw_millis);
     s_trainer->set_state(MorseTrainer::TrainerState::Player);
     s_trainer->set_speed_wpm(s_settings.wpm);
+    s_trainer->set_echo_result_fn([](const std::string& /*phrase*/, bool success) {
+        s_echo_typed.clear();
+        if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
+        if (s_echo_result_lbl) {
+            lv_label_set_text(s_echo_result_lbl, success ? "OK" : "ERR");
+            lv_obj_set_style_text_color(s_echo_result_lbl,
+                success ? lv_palette_main(LV_PALETTE_GREEN)
+                        : lv_palette_main(LV_PALETTE_RED), 0);
+        }
+    });
 
     // ── Encoder indev ─────────────────────────────────────────────────────────
     s_enc_indev = lv_indev_create();
@@ -708,32 +811,50 @@ void setup()
         {});
 
     Log.verboseln("Ready");
-#else
-    lv_obj_t* lbl = lv_label_create(lv_screen_active());
-    lv_label_set_text(lbl, "M32 NG\n(board not supported)");
-    lv_obj_center(lbl);
-    lv_timer_handler();
-#endif
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────
 
 void loop()
 {
-#ifdef BOARD_POCKETWROOM
     KeyEvent ev;
     while (s_keys->poll(ev)) route(ev);
 
-    if (s_active_mode == ActiveMode::KEYER) {
+    if (s_active_mode == ActiveMode::KEYER ||
+        s_active_mode == ActiveMode::ECHO) {
         s_paddle->tick();
         s_keyer->tick();
         s_decoder->tick();
-    } else if (s_active_mode == ActiveMode::GENERATOR) {
+    }
+    if (s_active_mode == ActiveMode::GENERATOR ||
+        s_active_mode == ActiveMode::ECHO) {
         s_trainer->tick();
     }
-#endif
+
     lv_timer_handler();
     delay(5);
 }
+
+#else // !BOARD_POCKETWROOM
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(2000);
+    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+    display_init();
+    lv_obj_t* lbl = lv_label_create(lv_screen_active());
+    lv_label_set_text(lbl, "M32 NG\n(board not supported)");
+    lv_obj_center(lbl);
+    lv_timer_handler();
+}
+
+void loop()
+{
+    lv_timer_handler();
+    delay(5);
+}
+
+#endif // BOARD_POCKETWROOM
 
 #endif // SMOKE_TEST / Full UI

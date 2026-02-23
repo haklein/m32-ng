@@ -63,7 +63,7 @@ struct AppSettings {
 static AppSettings s_settings;
 
 // ── Active CW mode ────────────────────────────────────────────────────────────
-enum class ActiveMode { NONE, KEYER, GENERATOR };
+enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── Hardware ──────────────────────────────────────────────────────────────────
@@ -88,6 +88,12 @@ static CWTextField* s_keyer_tf  = nullptr;  // set/cleared with keyer screen
 static CWTextField* s_gen_tf    = nullptr;  // set/cleared with generator screen
 static StatusBar*   s_active_sb = nullptr;  // status bar of the currently visible screen
 
+// ── Echo trainer widgets (set/cleared with echo screen) ──────────────────────
+static lv_obj_t*   s_echo_target_lbl = nullptr;   // phrase being played
+static lv_obj_t*   s_echo_rcvd_lbl   = nullptr;   // chars received so far
+static lv_obj_t*   s_echo_result_lbl = nullptr;   // "OK" / "ERR"
+static std::string s_echo_typed;                   // mirrors trainer's received_phrase_
+
 // ── Screen stack & navigation ─────────────────────────────────────────────────
 static ScreenStack   s_stack;
 static volatile bool s_quit = false;
@@ -105,6 +111,7 @@ static lv_group_t* s_settings_group = nullptr;
 static lv_obj_t* build_main_menu();
 static lv_obj_t* build_keyer_screen();
 static lv_obj_t* build_generator_screen();
+static lv_obj_t* build_echo_screen();
 static lv_obj_t* build_settings_screen();
 static void      apply_settings();
 
@@ -160,9 +167,18 @@ static void on_lever_state(LeverState state)
 
 static void on_letter_decoded(const std::string& letter)
 {
-    if (!s_keyer_tf) return;
-    if (letter == " ") s_keyer_tf->next_word();
-    else               s_keyer_tf->add_string(letter);
+    if (s_active_mode == ActiveMode::KEYER) {
+        if (!s_keyer_tf) return;
+        if (letter == " ") s_keyer_tf->next_word();
+        else               s_keyer_tf->add_string(letter);
+    } else if (s_active_mode == ActiveMode::ECHO) {
+        s_trainer->symbol_received(letter);
+        if (s_echo_rcvd_lbl) {
+            if      (letter == "<err>") { if (!s_echo_typed.empty()) s_echo_typed.pop_back(); }
+            else if (letter != " ")     { s_echo_typed += letter; }
+            lv_label_set_text(s_echo_rcvd_lbl, s_echo_typed.c_str());
+        }
+    }
 }
 
 // ── Propagate settings to all engine objects ──────────────────────────────────
@@ -222,6 +238,7 @@ static lv_obj_t* build_main_menu()
             enter_cb = []() {
                 s_active_mode = ActiveMode::GENERATOR;
                 s_gen_paused  = false;
+                s_trainer->set_state(MorseTrainer::TrainerState::Player);
                 s_trainer->set_playing();
                 lv_indev_set_group(s_enc_indev, nullptr);
             };
@@ -230,6 +247,24 @@ static lv_obj_t* build_main_menu()
                 s_trainer->set_idle();
                 s_audio->tone_off();
                 delete s_gen_tf; s_gen_tf = nullptr;
+                delete s_active_sb; s_active_sb = nullptr;
+            };
+        } else if (idx == 2) {
+            ns = build_echo_screen();
+            enter_cb = []() {
+                s_active_mode = ActiveMode::ECHO;
+                s_trainer->set_state(MorseTrainer::TrainerState::Echo);
+                s_trainer->set_playing();
+                lv_indev_set_group(s_enc_indev, nullptr);
+            };
+            leave_cb = []() {
+                s_active_mode = ActiveMode::NONE;
+                s_trainer->set_idle();
+                s_trainer->set_state(MorseTrainer::TrainerState::Player);
+                s_audio->tone_off();
+                s_echo_target_lbl = nullptr;
+                s_echo_rcvd_lbl   = nullptr;
+                s_echo_result_lbl = nullptr;
                 delete s_active_sb; s_active_sb = nullptr;
             };
         } else {
@@ -245,11 +280,12 @@ static lv_obj_t* build_main_menu()
     };
 
     static const struct { const char* icon; const char* label; } items[] = {
-        { LV_SYMBOL_AUDIO,    "CW Keyer"     },
-        { LV_SYMBOL_PLAY,     "CW Generator" },
-        { LV_SYMBOL_SETTINGS, "Settings"     },
+        { LV_SYMBOL_AUDIO,    "CW Keyer"      },
+        { LV_SYMBOL_PLAY,     "CW Generator"  },
+        { LV_SYMBOL_LOOP,     "Echo Trainer"  },
+        { LV_SYMBOL_SETTINGS, "Settings"      },
     };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_group_add_obj(s_menu_group, btn);
         lv_obj_add_event_cb(btn, push_screen, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -303,6 +339,50 @@ static lv_obj_t* build_generator_screen()
     s_gen_tf = new CWTextField(scr);
     lv_obj_set_pos(s_gen_tf->obj(), 4, tf_y);
     lv_obj_set_size(s_gen_tf->obj(), SCREEN_W - 8, SCREEN_H - tf_y - 4);
+
+    return scr;
+}
+
+// ── Screen: Echo Trainer ──────────────────────────────────────────────────────
+static lv_obj_t* build_echo_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr);
+    sb->set_mode("Echo Trainer");
+    sb->set_wpm(s_settings.wpm);
+    s_active_sb = sb;
+
+    const lv_coord_t ROW_H  = (SCREEN_H - CONTENT_Y) / 3;
+    const lv_coord_t ROW1_Y = CONTENT_Y + 4;
+    const lv_coord_t ROW2_Y = CONTENT_Y + ROW_H + 4;
+
+    lv_obj_t* l1 = lv_label_create(scr);
+    lv_label_set_text(l1, "Sent:");
+    lv_obj_set_pos(l1, 8, ROW1_Y + 8);
+
+    s_echo_target_lbl = lv_label_create(scr);
+    lv_label_set_text(s_echo_target_lbl, "...");
+    lv_obj_set_pos(s_echo_target_lbl, 60, ROW1_Y + 6);
+    lv_obj_set_width(s_echo_target_lbl, SCREEN_W - 68);
+
+    lv_obj_t* l2 = lv_label_create(scr);
+    lv_label_set_text(l2, "Rcvd:");
+    lv_obj_set_pos(l2, 8, ROW2_Y + 8);
+
+    s_echo_rcvd_lbl = lv_label_create(scr);
+    lv_label_set_text(s_echo_rcvd_lbl, "");
+    lv_obj_set_pos(s_echo_rcvd_lbl, 60, ROW2_Y + 6);
+    lv_obj_set_width(s_echo_rcvd_lbl, SCREEN_W - 68);
+
+    s_echo_result_lbl = lv_label_create(scr);
+    lv_label_set_text(s_echo_result_lbl, "");
+    lv_obj_align(s_echo_result_lbl, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+    lv_obj_t* hint = lv_label_create(scr);
+    lv_label_set_text(hint, "Space=DIT  Enter=DAH  \xe2\x86\x91/\xe2\x86\x93=WPM  E=back");
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 8, -22);
 
     return scr;
 }
@@ -429,12 +509,28 @@ int main(void)
         },
         []() -> std::string {
             std::string phrase = s_gen->random_word();
-            if (s_gen_tf) s_gen_tf->add_string(phrase + " ");
+            if (s_gen_tf)          s_gen_tf->add_string(phrase + " ");
+            if (s_echo_target_lbl) {
+                s_echo_typed.clear();
+                if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
+                if (s_echo_result_lbl) lv_label_set_text(s_echo_result_lbl, "");
+                lv_label_set_text(s_echo_target_lbl, phrase.c_str());
+            }
             return phrase;
         },
         sim_millis);
     s_trainer->set_state(MorseTrainer::TrainerState::Player);
     s_trainer->set_speed_wpm(s_settings.wpm);
+    s_trainer->set_echo_result_fn([](const std::string& /*phrase*/, bool success) {
+        s_echo_typed.clear();
+        if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
+        if (s_echo_result_lbl) {
+            lv_label_set_text(s_echo_result_lbl, success ? "OK" : "ERR");
+            lv_obj_set_style_text_color(s_echo_result_lbl,
+                success ? lv_palette_main(LV_PALETTE_GREEN)
+                        : lv_palette_main(LV_PALETTE_RED), 0);
+        }
+    });
 
     // Encoder indev
     s_enc_indev = lv_indev_create();
@@ -466,16 +562,18 @@ int main(void)
             switch (ev) {
                 case KeyEvent::ENCODER_CW:
                     s_enc_diff++;
-                    if (s_active_mode == ActiveMode::KEYER ||
-                        s_active_mode == ActiveMode::GENERATOR) {
+                    if (s_active_mode == ActiveMode::KEYER  ||
+                        s_active_mode == ActiveMode::GENERATOR ||
+                        s_active_mode == ActiveMode::ECHO) {
                         s_settings.wpm = std::min(s_settings.wpm + 1, 40);
                         apply_settings();
                     }
                     break;
                 case KeyEvent::ENCODER_CCW:
                     s_enc_diff--;
-                    if (s_active_mode == ActiveMode::KEYER ||
-                        s_active_mode == ActiveMode::GENERATOR) {
+                    if (s_active_mode == ActiveMode::KEYER  ||
+                        s_active_mode == ActiveMode::GENERATOR ||
+                        s_active_mode == ActiveMode::ECHO) {
                         s_settings.wpm = std::max(s_settings.wpm - 1, 5);
                         apply_settings();
                     }
@@ -503,27 +601,37 @@ int main(void)
                     break;
 
                 case KeyEvent::PADDLE_DIT_DOWN:
-                    if (s_active_mode == ActiveMode::KEYER) s_paddle->setDotPushed(true);
+                    if (s_active_mode == ActiveMode::KEYER ||
+                        s_active_mode == ActiveMode::ECHO)  s_paddle->setDotPushed(true);
+                    if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
                     break;
                 case KeyEvent::PADDLE_DIT_UP:
-                    if (s_active_mode == ActiveMode::KEYER) s_paddle->setDotPushed(false);
+                    if (s_active_mode == ActiveMode::KEYER ||
+                        s_active_mode == ActiveMode::ECHO)  s_paddle->setDotPushed(false);
                     break;
                 case KeyEvent::PADDLE_DAH_DOWN:
-                    if (s_active_mode == ActiveMode::KEYER) s_paddle->setDashPushed(true);
+                    if (s_active_mode == ActiveMode::KEYER ||
+                        s_active_mode == ActiveMode::ECHO)  s_paddle->setDashPushed(true);
+                    if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
                     break;
                 case KeyEvent::PADDLE_DAH_UP:
-                    if (s_active_mode == ActiveMode::KEYER) s_paddle->setDashPushed(false);
+                    if (s_active_mode == ActiveMode::KEYER ||
+                        s_active_mode == ActiveMode::ECHO)  s_paddle->setDashPushed(false);
                     break;
 
                 case KeyEvent::STRAIGHT_DOWN:
-                    if (s_active_mode == ActiveMode::KEYER) {
+                    if (s_active_mode == ActiveMode::KEYER ||
+                        s_active_mode == ActiveMode::ECHO) {
                         s_straight_t0 = (uint32_t)sim_millis();
                         s_audio->tone_on(s_settings.freq_hz);
                         s_decoder->set_transmitting(true);
+                        if (s_active_mode == ActiveMode::ECHO)
+                            s_trainer->tame_echo_timeout();
                     }
                     break;
                 case KeyEvent::STRAIGHT_UP:
-                    if (s_active_mode == ActiveMode::KEYER) {
+                    if (s_active_mode == ActiveMode::KEYER ||
+                        s_active_mode == ActiveMode::ECHO) {
                         uint32_t dur = (uint32_t)sim_millis() - s_straight_t0;
                         unsigned long dit = 1200u / (unsigned long)s_settings.wpm;
                         s_audio->tone_off();
@@ -542,11 +650,14 @@ int main(void)
         while (s_keys->poll(ev)) route(ev);
         while (s_midi->poll(ev)) route(ev);
 
-        if (s_active_mode == ActiveMode::KEYER) {
+        if (s_active_mode == ActiveMode::KEYER ||
+            s_active_mode == ActiveMode::ECHO) {
             s_paddle->tick();
             s_keyer->tick();
             s_decoder->tick();
-        } else if (s_active_mode == ActiveMode::GENERATOR) {
+        }
+        if (s_active_mode == ActiveMode::GENERATOR ||
+            s_active_mode == ActiveMode::ECHO) {
             s_trainer->tick();
         }
     }
