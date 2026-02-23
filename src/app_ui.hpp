@@ -39,8 +39,9 @@ struct AppSettings {
     bool     cont_abbrevs = false;   // Ham radio abbreviations
     bool     cont_calls   = false;   // Synthetic callsigns
     bool     cont_chars   = false;   // Random character groups
-    uint8_t  chars_group  = 0;       // 0=Alpha, 1=Alpha+Num, 2=All CW
-    uint8_t  koch_lesson  = 0;       // 0=off, 1..N=first N Koch chars
+    uint8_t  chars_group       = 0;   // 0=Alpha, 1=Alpha+Num, 2=All CW
+    uint8_t  koch_lesson       = 0;   // 0=off, 1..N=first N Koch chars
+    uint8_t  echo_max_repeats  = 3;   // 0=unlimited, else max failures before reveal
 };
 static AppSettings s_settings;
 
@@ -171,6 +172,7 @@ static void apply_settings()
     s_keyer->setModeA(s_settings.mode_a);
     s_decoder->set_decode_threshold(dit_ms * 2);
     s_trainer->set_speed_wpm(s_settings.wpm);
+    s_trainer->set_max_echo_repeats(s_settings.echo_max_repeats);
     s_audio->set_volume(s_settings.volume);
     if (s_active_sb) s_active_sb->set_wpm(s_settings.wpm);
 }
@@ -500,6 +502,21 @@ static lv_obj_t* build_settings_screen()
         s_audio->set_volume(s_settings.volume);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
+    // Echo max repeats
+    make_label(compact ? "Echo rpt (0=\xe2\x88\x9e)" : "Echo max rpt (0=\xe2\x88\x9e)", 4);
+    lv_obj_t* erpt_spn = lv_spinbox_create(scr);
+    lv_spinbox_set_range(erpt_spn, 0, 9);
+    lv_spinbox_set_digit_count(erpt_spn, 1);
+    lv_spinbox_set_value(erpt_spn, s_settings.echo_max_repeats);
+    lv_obj_set_width(erpt_spn, 80);
+    lv_obj_set_pos(erpt_spn, CTL_X, START_Y + 4 * ROW_H + CTL_OFF);
+    lv_group_add_obj(s_settings_group, erpt_spn);
+    lv_obj_add_event_cb(erpt_spn, [](lv_event_t* e) {
+        s_settings.echo_max_repeats =
+            (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+        apply_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=edit value    E=back");
@@ -748,8 +765,9 @@ static void app_ui_init(uint32_t rng_seed)
     s_trainer->set_state(MorseTrainer::TrainerState::Player);
     s_trainer->set_speed_wpm(s_settings.wpm);
     s_trainer->set_echo_result_fn([](const std::string& phrase, bool success) {
-        // Reveal the phrase now that the user has echoed it back
-        if (s_echo_target_lbl) lv_label_set_text(s_echo_target_lbl, phrase.c_str());
+        // Only reveal on success; ERR keeps "?" so the word can be replayed blind
+        if (success && s_echo_target_lbl)
+            lv_label_set_text(s_echo_target_lbl, phrase.c_str());
         // Clear received display so the next round starts clean
         s_echo_typed.clear();
         if (s_echo_rcvd_lbl) lv_label_set_text(s_echo_rcvd_lbl, "");
@@ -758,6 +776,17 @@ static void app_ui_init(uint32_t rng_seed)
             lv_obj_set_style_text_color(s_echo_result_lbl,
                 success ? lv_palette_main(LV_PALETTE_GREEN)
                         : lv_palette_main(LV_PALETTE_RED), 0);
+        }
+    });
+    s_trainer->set_echo_reveal_fn([](const std::string& phrase) {
+        // Max repeats exhausted — show correct phrase and "MISS"
+        if (s_echo_target_lbl) lv_label_set_text(s_echo_target_lbl, phrase.c_str());
+        s_echo_typed.clear();
+        if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
+        if (s_echo_result_lbl) {
+            lv_label_set_text(s_echo_result_lbl, "MISS");
+            lv_obj_set_style_text_color(s_echo_result_lbl,
+                lv_palette_main(LV_PALETTE_ORANGE), 0);
         }
     });
 

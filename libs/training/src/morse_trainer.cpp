@@ -21,7 +21,9 @@ void MorseTrainer::set_speed_wpm(int wpm)
 }
 
 void MorseTrainer::set_echo_result_fn(echo_result_fn cb) { result_cb_ = std::move(cb); }
+void MorseTrainer::set_echo_reveal_fn(echo_reveal_fn cb) { reveal_cb_ = std::move(cb); }
 void MorseTrainer::set_new_phrase_fn(new_phrase_fn cb)   { phrase_cb_ = std::move(cb); }
+void MorseTrainer::set_max_echo_repeats(uint8_t n)       { max_echo_repeats_ = n; }
 void MorseTrainer::set_state(TrainerState s)             { current_state_ = s; }
 void MorseTrainer::set_adaptive_speed(bool a)            { adaptive_speed_ = a; }
 
@@ -70,16 +72,27 @@ void MorseTrainer::tick()
             if (now > last_keyer_received_ + ECHO_START_RECEIVE_DELAY_MS) {
                 bool correct = (phrase_plain_ == received_phrase_);
                 if (correct) {
+                    echo_repeat_count_     = 0;
                     current_echo_state_    = EchoState::Success;
                     last_echo_state_change_ = now;
                     if (result_cb_) result_cb_(phrase_plain_, true);
                     if (adaptive_speed_) set_speed_wpm(wpm_ + 1);
                 } else {
-                    current_echo_state_    = EchoState::Error;
-                    last_echo_state_change_ = now;
-                    current_player_state_  = PlayerState::InterCharacter;
-                    player_position_       = 0;
-                    if (result_cb_) result_cb_(phrase_plain_, false);
+                    if (max_echo_repeats_ > 0 &&
+                        ++echo_repeat_count_ >= max_echo_repeats_)
+                    {
+                        // Max repeats exhausted — reveal phrase, then advance.
+                        echo_repeat_count_     = 0;
+                        current_echo_state_    = EchoState::Reveal;
+                        last_echo_state_change_ = now;
+                        if (reveal_cb_) reveal_cb_(phrase_plain_);
+                    } else {
+                        current_echo_state_    = EchoState::Error;
+                        last_echo_state_change_ = now;
+                        current_player_state_  = PlayerState::InterCharacter;
+                        player_position_       = 0;
+                        if (result_cb_) result_cb_(phrase_plain_, false);
+                    }
                     if (adaptive_speed_) set_speed_wpm(std::max(5, wpm_ - 1));
                 }
                 received_phrase_.clear();
@@ -95,6 +108,16 @@ void MorseTrainer::tick()
         case EchoState::Error:
             if (now > last_echo_state_change_ + ERROR_DELAY_MS) {
                 current_echo_state_ = EchoState::Playing;
+            }
+            break;
+
+        case EchoState::Reveal:
+            if (now > last_echo_state_change_ + REVEAL_DELAY_MS) {
+                current_echo_state_   = EchoState::Playing;
+                current_player_state_ = PlayerState::AdvancePhrase;
+                // Bypass AdvancePhrase's own delay so next phrase starts quickly.
+                last_player_state_change_ =
+                    now - static_cast<uint32_t>(ADVANCE_PHRASE_DELAY_MS);
             }
             break;
 

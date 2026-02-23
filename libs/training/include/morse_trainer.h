@@ -20,6 +20,10 @@ using sidetone_fn     = std::function<void(bool)>;
 // Reports echo trainer result: (phrase_plain, success).
 using echo_result_fn  = std::function<void(const std::string&, bool)>;
 
+// Called when max echo repeats is reached with the correct phrase, so the UI
+// can reveal it to the operator.
+using echo_reveal_fn  = std::function<void(const std::string&)>;
+
 // Fetches the next phrase to play; returns plain text string.
 using new_phrase_fn   = std::function<std::string()>;
 
@@ -34,7 +38,7 @@ class MorseTrainer
 {
 public:
     enum class TrainerState { Player, Echo };
-    enum class EchoState    { Playing, Receiving, Success, Error };
+    enum class EchoState    { Playing, Receiving, Success, Error, Reveal };
     enum class PlayerState  {
         Dot, Dash, InterSymbol, InterCharacter, InterWord, AdvancePhrase, Idle
     };
@@ -52,7 +56,11 @@ public:
     void set_speed_wpm(int wpm);
     void set_adaptive_speed(bool adaptive);
     void set_echo_result_fn(echo_result_fn cb);
+    void set_echo_reveal_fn(echo_reveal_fn cb);
     void set_new_phrase_fn(new_phrase_fn cb);
+
+    // 0 = unlimited repeats; N = advance after N failures without success.
+    void set_max_echo_repeats(uint8_t n);
 
     // Feed a decoded letter from MorseDecoder into the echo trainer.
     void symbol_received(const std::string& symbol);
@@ -74,13 +82,18 @@ private:
 
     static constexpr int SUCCESS_DELAY_MS            = 1000;
     static constexpr int ERROR_DELAY_MS              = 1000;
+    static constexpr int REVEAL_DELAY_MS             = 2000;
     static constexpr int ECHO_START_RECEIVE_DELAY_MS = 2000;
     static constexpr int ADVANCE_PHRASE_DELAY_MS     = 3000;
 
     sidetone_fn    sidetone_cb_;
     echo_result_fn result_cb_;
+    echo_reveal_fn reveal_cb_;
     new_phrase_fn  phrase_cb_;
     millis_fun_ptr millis_cb_;
+
+    uint8_t max_echo_repeats_  = 3;   // 0 = unlimited
+    uint8_t echo_repeat_count_ = 0;
 
     TrainerState current_state_        = TrainerState::Player;
     PlayerState  current_player_state_ = PlayerState::Idle;
