@@ -64,6 +64,12 @@ static TextGenerators* s_gen        = nullptr;
 static std::mt19937    s_rng;
 static bool            s_gen_paused = false;
 
+// ── Word-space timer for CW keyer ─────────────────────────────────────────
+// Tracks last element END (not character decode) so the 7-dit gap is measured
+// from the right point regardless of how long the next character takes to play.
+static unsigned long s_keyer_last_element_end_t = 0;
+static bool          s_keyer_word_pending        = false;
+
 // ── UI widgets updated from engine callbacks ───────────────────────────────
 static CWTextField* s_keyer_tf  = nullptr;
 static CWTextField* s_gen_tf    = nullptr;
@@ -117,16 +123,19 @@ static void on_play_state(PlayState state)
         case PLAY_STATE_DASH_ON:
             s_audio->tone_on(s_settings.freq_hz);
             s_decoder->set_transmitting(true);
+            s_keyer_last_element_end_t = (unsigned long)app_millis();
             break;
         case PLAY_STATE_DOT_OFF:
             s_audio->tone_off();
             s_decoder->append_dot();
             s_decoder->set_transmitting(false);
+            s_keyer_last_element_end_t = (unsigned long)app_millis();
             break;
         case PLAY_STATE_DASH_OFF:
             s_audio->tone_off();
             s_decoder->append_dash();
             s_decoder->set_transmitting(false);
+            s_keyer_last_element_end_t = (unsigned long)app_millis();
             break;
         default:
             break;
@@ -141,9 +150,9 @@ static void on_lever_state(LeverState state)
 static void on_letter_decoded(const std::string& letter)
 {
     if (s_active_mode == ActiveMode::KEYER) {
-        if (!s_keyer_tf) return;
-        if (letter == " ") s_keyer_tf->next_word();
-        else               s_keyer_tf->add_string(letter);
+        if (!s_keyer_tf || letter == " ") return;
+        s_keyer_tf->add_string(letter);
+        s_keyer_word_pending = true;
     } else if (s_active_mode == ActiveMode::ECHO) {
         s_trainer->symbol_received(letter);
         if (s_echo_rcvd_lbl) {
@@ -236,7 +245,9 @@ static lv_obj_t* build_main_menu()
                 lv_indev_set_group(s_enc_indev, nullptr);
             };
             leave_cb = []() {
-                s_active_mode = ActiveMode::NONE;
+                s_active_mode              = ActiveMode::NONE;
+                s_keyer_word_pending       = false;
+                s_keyer_last_element_end_t = 0;
                 delete s_keyer_tf; s_keyer_tf = nullptr;
                 delete s_active_sb; s_active_sb = nullptr;
             };
@@ -676,6 +687,7 @@ static void route(KeyEvent ev)
                 s_straight_t0 = (uint32_t)app_millis();
                 s_audio->tone_on(s_settings.freq_hz);
                 s_decoder->set_transmitting(true);
+                s_keyer_last_element_end_t = (unsigned long)app_millis();
                 if (s_active_mode == ActiveMode::ECHO)
                     s_trainer->tame_echo_timeout();
             }
@@ -689,6 +701,8 @@ static void route(KeyEvent ev)
                 s_decoder->set_transmitting(false);
                 if (dur < dit * 2) s_decoder->append_dot();
                 else               s_decoder->append_dash();
+                if (s_active_mode == ActiveMode::KEYER)
+                    s_keyer_last_element_end_t = (unsigned long)app_millis();
             }
             break;
 
@@ -765,6 +779,16 @@ static void app_ui_tick()
         s_paddle->tick();
         s_keyer->tick();
         s_decoder->tick();
+    }
+    // Word-space: 7 dit after the last element ended (standard CW word space).
+    // Measuring from element end (not character decode) ensures the timer can't
+    // fire during the playback of a longer next character (e.g. a dah).
+    if (s_active_mode == ActiveMode::KEYER && s_keyer_word_pending && s_keyer_tf) {
+        unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
+        if ((unsigned long)app_millis() - s_keyer_last_element_end_t > 7 * dit_ms) {
+            s_keyer_tf->add_string(" ");
+            s_keyer_word_pending = false;
+        }
     }
     if (s_active_mode == ActiveMode::GENERATOR ||
         s_active_mode == ActiveMode::ECHO) {
