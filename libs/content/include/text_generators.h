@@ -13,6 +13,11 @@ static constexpr const char CW_CHARS[] =
     "abcdefghijklmnopqrstuvwxyz0123456789.,:-/=?@+SANKEBäöüH";
 //   0....5....1....5....2....5....3....5....4....5....5....5
 
+// Koch order (LCWO): characters introduced in sequence.
+// Lesson N uses the first N characters of this string (N = 1..41).
+static constexpr const char KOCH_ORDER[] =
+    "kmuresnaptlwi.jz=foy,vg5/q92h38b?47c1d6x0";
+
 enum RandomOption
 {
     OPT_ALL,        // all CW characters
@@ -48,6 +53,9 @@ public:
 
     // Random character group from the selected character pool.
     std::string random_chars(int length, RandomOption option = OPT_ALL);
+
+    // Random character group drawn from an explicit charset string.
+    std::string random_chars_from_set(const std::string& charset, int length);
 
 private:
     std::mt19937& rng_;

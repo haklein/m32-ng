@@ -98,6 +98,16 @@ std::string TextGenerators::random_callsign(int max_length)
     return call;
 }
 
+std::string TextGenerators::random_chars_from_set(const std::string& charset, int length)
+{
+    if (charset.empty() || length <= 0) return "";
+    std::string result;
+    result.reserve(static_cast<size_t>(length));
+    for (int i = 0; i < length; ++i)
+        result += charset[rng_range(0, (int)charset.size())];
+    return result;
+}
+
 std::string TextGenerators::random_chars(int length, RandomOption option)
 {
     std::string result;

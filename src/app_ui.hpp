@@ -30,10 +30,17 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    int      wpm     = 15;
-    bool     mode_a  = false;   // false = Iambic B
-    uint16_t freq_hz = 700;
-    uint8_t  volume  = 7;
+    int      wpm          = 15;
+    bool     mode_a       = false;   // false = Iambic B
+    uint16_t freq_hz      = 700;
+    uint8_t  volume       = 7;
+    // Content
+    bool     cont_words   = true;    // English words
+    bool     cont_abbrevs = false;   // Ham radio abbreviations
+    bool     cont_calls   = false;   // Synthetic callsigns
+    bool     cont_chars   = false;   // Random character groups
+    uint8_t  chars_group  = 0;       // 0=Alpha, 1=Alpha+Num, 2=All CW
+    uint8_t  koch_lesson  = 0;       // 0=off, 1..N=first N Koch chars
 };
 static AppSettings s_settings;
 
@@ -76,6 +83,7 @@ static int32_t     s_enc_diff         = 0;
 static int         s_enc_press_frames = 0;
 static lv_group_t* s_menu_group     = nullptr;
 static lv_group_t* s_settings_group = nullptr;
+static lv_group_t* s_content_group  = nullptr;
 
 // ── Forward declarations ───────────────────────────────────────────────────
 static lv_obj_t* build_main_menu();
@@ -83,7 +91,9 @@ static lv_obj_t* build_keyer_screen();
 static lv_obj_t* build_generator_screen();
 static lv_obj_t* build_echo_screen();
 static lv_obj_t* build_settings_screen();
+static lv_obj_t* build_content_screen();
 static void      apply_settings();
+static std::string content_phrase();
 static void      route(KeyEvent ev);
 
 // ── LVGL encoder indev callback ────────────────────────────────────────────
@@ -154,6 +164,35 @@ static void apply_settings()
     s_trainer->set_speed_wpm(s_settings.wpm);
     s_audio->set_volume(s_settings.volume);
     if (s_active_sb) s_active_sb->set_wpm(s_settings.wpm);
+}
+
+// ── Content phrase generator ───────────────────────────────────────────────
+// Returns the next training phrase according to the current content settings.
+static std::string content_phrase()
+{
+    // Koch mode: character groups using the first N Koch chars
+    if (s_settings.koch_lesson > 0) {
+        int n = std::min((int)s_settings.koch_lesson,
+                         (int)(sizeof(KOCH_ORDER) - 1));
+        return s_gen->random_chars_from_set(std::string(KOCH_ORDER, n), 5);
+    }
+    // Collect enabled content types
+    int types[4]; int nt = 0;
+    if (s_settings.cont_words)   types[nt++] = 0;
+    if (s_settings.cont_abbrevs) types[nt++] = 1;
+    if (s_settings.cont_calls)   types[nt++] = 2;
+    if (s_settings.cont_chars)   types[nt++] = 3;
+    if (nt == 0) return s_gen->random_word();   // fallback: always something
+    int choice = types[std::uniform_int_distribution<int>(0, nt - 1)(s_rng)];
+    static const RandomOption char_opts[] = { OPT_ALPHA, OPT_ALNUM, OPT_ALL };
+    switch (choice) {
+        case 0: return s_gen->random_word();
+        case 1: return s_gen->random_abbrev();
+        case 2: return s_gen->random_callsign();
+        case 3: return s_gen->random_chars(
+                    5, char_opts[std::min((int)s_settings.chars_group, 2)]);
+    }
+    return s_gen->random_word();
 }
 
 // ── Screen: Main Menu ──────────────────────────────────────────────────────
@@ -236,6 +275,10 @@ static lv_obj_t* build_main_menu()
                 s_echo_result_lbl = nullptr;
                 delete s_active_sb; s_active_sb = nullptr;
             };
+        } else if (idx == 3) {
+            ns = build_content_screen();
+            enter_cb = []() { lv_indev_set_group(s_enc_indev, s_content_group); };
+            leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
         } else {
             ns = build_settings_screen();
             enter_cb = []() { lv_indev_set_group(s_enc_indev, s_settings_group); };
@@ -248,9 +291,10 @@ static lv_obj_t* build_main_menu()
         { LV_SYMBOL_AUDIO,    "CW Keyer"      },
         { LV_SYMBOL_PLAY,     "CW Generator"  },
         { LV_SYMBOL_LOOP,     "Echo Trainer"  },
+        { LV_SYMBOL_LIST,     "Content"       },
         { LV_SYMBOL_SETTINGS, "Settings"      },
     };
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_group_add_obj(s_menu_group, btn);
         lv_obj_add_event_cb(btn, push_screen, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -454,6 +498,109 @@ static lv_obj_t* build_settings_screen()
     return scr;
 }
 
+// ── Screen: Content ───────────────────────────────────────────────────────
+static lv_obj_t* build_content_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr);
+    sb->set_mode("Content");
+    sb->set_wpm(s_settings.wpm);
+    s_active_sb = sb;
+
+    if (s_content_group) lv_group_del(s_content_group);
+    s_content_group = lv_group_create();
+
+    const bool compact       = (SCREEN_H <= 200);
+    const lv_coord_t ROW_H   = compact ? 36 : 50;
+    const lv_coord_t START_Y = CONTENT_Y + (compact ? 4 : 10);
+    const lv_coord_t COL2_X  = compact ? SCREEN_W / 2 : SCREEN_W / 2 + 20;
+    const lv_coord_t LBL_X   = compact ? 8 : 16;
+    const lv_coord_t LBL_OFF = compact ? 8 : 14;
+    const lv_coord_t CTL_OFF = compact ? 4 : 8;
+
+    auto make_cb = [&](const char* text, bool checked,
+                       lv_coord_t x, lv_coord_t y) -> lv_obj_t* {
+        lv_obj_t* cb = lv_checkbox_create(scr);
+        lv_checkbox_set_text(cb, text);
+        if (checked) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_obj_set_pos(cb, x, y);
+        lv_group_add_obj(s_content_group, cb);
+        return cb;
+    };
+
+    // Row 0: Words | Abbrevs
+    lv_obj_t* cb_words = make_cb("Words",     s_settings.cont_words,
+                                 LBL_X, START_Y + 0 * ROW_H);
+    lv_obj_t* cb_abbr  = make_cb("Abbrevs",   s_settings.cont_abbrevs,
+                                 COL2_X, START_Y + 0 * ROW_H);
+    // Row 1: Callsigns | Chars
+    lv_obj_t* cb_calls = make_cb("Callsigns", s_settings.cont_calls,
+                                 LBL_X, START_Y + 1 * ROW_H);
+    lv_obj_t* cb_chars = make_cb("Chars",     s_settings.cont_chars,
+                                 COL2_X, START_Y + 1 * ROW_H);
+
+    lv_obj_add_event_cb(cb_words, [](lv_event_t* e) {
+        s_settings.cont_words = (lv_obj_get_state(lv_event_get_target_obj(e))
+                                 & LV_STATE_CHECKED) != 0;
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(cb_abbr, [](lv_event_t* e) {
+        s_settings.cont_abbrevs = (lv_obj_get_state(lv_event_get_target_obj(e))
+                                   & LV_STATE_CHECKED) != 0;
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(cb_calls, [](lv_event_t* e) {
+        s_settings.cont_calls = (lv_obj_get_state(lv_event_get_target_obj(e))
+                                 & LV_STATE_CHECKED) != 0;
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(cb_chars, [](lv_event_t* e) {
+        s_settings.cont_chars = (lv_obj_get_state(lv_event_get_target_obj(e))
+                                 & LV_STATE_CHECKED) != 0;
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // Row 2: Chars group dropdown  |  Koch spinbox
+    const lv_coord_t R2_Y = START_Y + 2 * ROW_H;
+
+    lv_obj_t* cg_lbl = lv_label_create(scr);
+    lv_label_set_text(cg_lbl, "Chars:");
+    lv_obj_set_pos(cg_lbl, LBL_X, R2_Y + LBL_OFF);
+
+    lv_obj_t* cg_dd = lv_dropdown_create(scr);
+    lv_dropdown_set_options(cg_dd, "Alpha\nAlpha+Num\nAll CW");
+    lv_dropdown_set_selected(cg_dd, s_settings.chars_group);
+    lv_obj_set_width(cg_dd, compact ? 110 : 140);
+    lv_obj_set_pos(cg_dd, LBL_X + (compact ? 48 : 60), R2_Y + CTL_OFF);
+    lv_group_add_obj(s_content_group, cg_dd);
+    lv_obj_add_event_cb(cg_dd, [](lv_event_t* e) {
+        s_settings.chars_group = (uint8_t)lv_dropdown_get_selected(
+            lv_event_get_target_obj(e));
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* kl_lbl = lv_label_create(scr);
+    lv_label_set_text(kl_lbl, compact ? "Koch:" : "Koch (0=off):");
+    lv_obj_set_pos(kl_lbl, COL2_X, R2_Y + LBL_OFF);
+
+    lv_obj_t* koch_spn = lv_spinbox_create(scr);
+    lv_spinbox_set_range(koch_spn, 0, (int32_t)(sizeof(KOCH_ORDER) - 1));
+    lv_spinbox_set_digit_count(koch_spn, 2);
+    lv_spinbox_set_value(koch_spn, s_settings.koch_lesson);
+    lv_obj_set_width(koch_spn, compact ? 80 : 100);
+    lv_obj_set_pos(koch_spn, COL2_X + (compact ? 50 : 110), R2_Y + CTL_OFF);
+    lv_group_add_obj(s_content_group, koch_spn);
+    lv_obj_add_event_cb(koch_spn, [](lv_event_t* e) {
+        s_settings.koch_lesson = (uint8_t)lv_spinbox_get_value(
+            lv_event_get_target_obj(e));
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+#ifdef NATIVE_BUILD
+    lv_obj_t* hint = lv_label_create(scr);
+    lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=toggle/edit    E=back");
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+#endif
+
+    return scr;
+}
+
 // ── Key event router ───────────────────────────────────────────────────────
 static void route(KeyEvent ev)
 {
@@ -567,7 +714,7 @@ static void app_ui_init(uint32_t rng_seed)
             else    s_audio->tone_off();
         },
         []() -> std::string {
-            std::string phrase = s_gen->random_word();
+            std::string phrase = content_phrase();
             // Generator: deferred — show the just-finished word, queue the new one
             if (s_gen_tf) {
                 if (!s_pending_gen_phrase.empty())
