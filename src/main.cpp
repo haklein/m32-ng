@@ -278,6 +278,7 @@ static lv_obj_t*   s_echo_target_lbl = nullptr;   // phrase being played
 static lv_obj_t*   s_echo_rcvd_lbl   = nullptr;   // chars received so far
 static lv_obj_t*   s_echo_result_lbl = nullptr;   // "OK" / "ERR"
 static std::string s_echo_typed;                   // mirrors trainer's received_phrase_
+static std::string s_pending_gen_phrase;           // deferred generator word display
 
 // ── Screen stack & navigation ─────────────────────────────────────────────────
 static ScreenStack s_stack;
@@ -416,6 +417,7 @@ static lv_obj_t* build_main_menu()
                 s_active_mode = ActiveMode::NONE;
                 s_trainer->set_idle();
                 s_audio->tone_off();
+                s_pending_gen_phrase.clear();
                 delete s_gen_tf; s_gen_tf = nullptr;
                 delete s_active_sb; s_active_sb = nullptr;
             };
@@ -521,7 +523,7 @@ static lv_obj_t* build_echo_screen()
     lv_obj_set_pos(l1, 8, ROW1_Y + 8);
 
     s_echo_target_lbl = lv_label_create(scr);
-    lv_label_set_text(s_echo_target_lbl, "...");
+    lv_label_set_text(s_echo_target_lbl, "?");
     lv_obj_set_pos(s_echo_target_lbl, 60, ROW1_Y + 6);
     lv_obj_set_width(s_echo_target_lbl, SCREEN_W - 68);
 
@@ -777,21 +779,27 @@ void setup()
         },
         []() -> std::string {
             std::string phrase = s_gen->random_word();
-            if (s_gen_tf)          s_gen_tf->add_string(phrase + " ");
+            // Generator: deferred — show the just-finished word, queue the new one
+            if (s_gen_tf) {
+                if (!s_pending_gen_phrase.empty())
+                    s_gen_tf->add_string(s_pending_gen_phrase + " ");
+                s_pending_gen_phrase = phrase;
+            }
+            // Echo: reset for new round; hide target until user echoes it back
             if (s_echo_target_lbl) {
                 s_echo_typed.clear();
                 if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
                 if (s_echo_result_lbl) lv_label_set_text(s_echo_result_lbl, "");
-                lv_label_set_text(s_echo_target_lbl, phrase.c_str());
+                lv_label_set_text(s_echo_target_lbl, "?");
             }
             return phrase;
         },
         hw_millis);
     s_trainer->set_state(MorseTrainer::TrainerState::Player);
     s_trainer->set_speed_wpm(s_settings.wpm);
-    s_trainer->set_echo_result_fn([](const std::string& /*phrase*/, bool success) {
-        s_echo_typed.clear();
-        if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
+    s_trainer->set_echo_result_fn([](const std::string& phrase, bool success) {
+        // Reveal the phrase now that the user has echoed it back
+        if (s_echo_target_lbl) lv_label_set_text(s_echo_target_lbl, phrase.c_str());
         if (s_echo_result_lbl) {
             lv_label_set_text(s_echo_result_lbl, success ? "OK" : "ERR");
             lv_obj_set_style_text_color(s_echo_result_lbl,
