@@ -364,7 +364,7 @@ static void apply_settings()
     unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
     s_keyer->setSpeedWPM((unsigned long)s_settings.wpm);
     s_keyer->setModeA(s_settings.mode_a);
-    s_decoder->set_decode_threshold(dit_ms * 3);
+    s_decoder->set_decode_threshold(dit_ms * 2);
     s_trainer->set_speed_wpm(s_settings.wpm);
     s_audio->set_volume(s_settings.volume);
     if (s_active_sb) s_active_sb->set_wpm(s_settings.wpm);
@@ -765,7 +765,7 @@ void setup()
 
     // ── CW engine ─────────────────────────────────────────────────────────────
     unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
-    s_decoder = new MorseDecoder(dit_ms * 3, on_letter_decoded, hw_millis);
+    s_decoder = new MorseDecoder(dit_ms * 2, on_letter_decoded, hw_millis);
     s_keyer   = new IambicKeyer(dit_ms, on_play_state, hw_millis, s_settings.mode_a);
     s_paddle  = new PaddleCtl(/*debounce_ms=*/2, on_lever_state, hw_millis);
 
@@ -800,6 +800,9 @@ void setup()
     s_trainer->set_echo_result_fn([](const std::string& phrase, bool success) {
         // Reveal the phrase now that the user has echoed it back
         if (s_echo_target_lbl) lv_label_set_text(s_echo_target_lbl, phrase.c_str());
+        // Clear received display so the next round starts clean
+        s_echo_typed.clear();
+        if (s_echo_rcvd_lbl) lv_label_set_text(s_echo_rcvd_lbl, "");
         if (s_echo_result_lbl) {
             lv_label_set_text(s_echo_result_lbl, success ? "OK" : "ERR");
             lv_obj_set_style_text_color(s_echo_result_lbl,
