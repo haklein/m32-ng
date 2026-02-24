@@ -709,6 +709,9 @@ void CWChatbot::symbol_received(const std::string& symbol) {
 void CWChatbot::transmission_complete() {
     transmitting_ = false;
     last_activity_time_ = millis_cb_();
+    // Reset timeout baseline so all OVER_TIMEOUT_MS checks measure
+    // from play-end, not from when the phrase was queued.
+    state_enter_time_ = millis_cb_();
 
     switch (state_) {
     case QSOState::BOT_CQ:
@@ -717,6 +720,10 @@ void CWChatbot::transmission_complete() {
         break;
     case QSOState::BOT_EXCHANGE:
         set_state(QSOState::WAIT_OPER_EXCHANGE);
+        break;
+    case QSOState::TOPIC_ROUNDS:
+        // Reset prompt flag so operator gets a fresh 15s to reply.
+        prompt_sent_ = false;
         break;
     case QSOState::CLOSING:
         if (closing_phase_ >= 1) {
