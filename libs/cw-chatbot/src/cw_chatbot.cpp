@@ -10,15 +10,15 @@
 
 static const char* EXCHANGE_TERSE =
     "{oper_call} DE {bot_call} "
-    "RST {rst} NAME {name} QTH {qth} "
-    "AR {oper_call} DE {bot_call} KN";
+    "RST {rst} = NAME {name} = QTH {qth} = "
+    "<AR> {oper_call} DE {bot_call} <KN>";
 
 static const char* EXCHANGE_NORMAL =
     "{oper_call} DE {bot_call} {greeting} {oper_name} TNX FER CALL = "
     "UR RST {rst} {rst} = "
     "NAME {name} {name} = "
     "QTH {qth} {qth} = "
-    "HW? AR {oper_call} DE {bot_call} KN";
+    "HW? <AR> {oper_call} DE {bot_call} <KN>";
 
 static const char* EXCHANGE_CHATTY =
     "{oper_call} DE {bot_call} {greeting} {greeting} DR {oper_name} = "
@@ -26,56 +26,56 @@ static const char* EXCHANGE_CHATTY =
     "UR RST IS {rst} {rst} = "
     "NAME HR IS {name} {name} = "
     "QTH IS NR {qth} {qth} = "
-    "HW CPY? AR {oper_call} DE {bot_call} KN";
+    "HW CPY? <AR> {oper_call} DE {bot_call} <KN>";
 
 // Topic templates — RIG
-static const char* TOPIC_RIG_TERSE  = "RIG {rig} PWR {pwr} AR KN";
+static const char* TOPIC_RIG_TERSE  = "RIG {rig} = PWR {pwr} = <AR> <KN>";
 static const char* TOPIC_RIG_NORMAL =
-    "RIG HR IS {rig} {rig} = PWR ABT {pwr} = HW? AR {oper_call} DE {bot_call} KN";
+    "RIG HR IS {rig} {rig} = PWR ABT {pwr} = HW? <AR> {oper_call} DE {bot_call} <KN>";
 static const char* TOPIC_RIG_CHATTY =
     "RIG HR IS {rig} {rig} = VY FB RIG = RUNNING ABT {pwr} = "
-    "HW ABT UR RIG? AR {oper_call} DE {bot_call} KN";
+    "HW ABT UR RIG? <AR> {oper_call} DE {bot_call} <KN>";
 
 // Topic templates — ANT
-static const char* TOPIC_ANT_TERSE  = "ANT {ant} AR KN";
+static const char* TOPIC_ANT_TERSE  = "ANT {ant} = <AR> <KN>";
 static const char* TOPIC_ANT_NORMAL =
-    "ANT IS {ant} = HW? AR {oper_call} DE {bot_call} KN";
+    "ANT IS {ant} = HW? <AR> {oper_call} DE {bot_call} <KN>";
 static const char* TOPIC_ANT_CHATTY =
     "ANT HR IS {ant} = WORKS FB ON THIS BAND = "
-    "HW ABT UR ANT? AR {oper_call} DE {bot_call} KN";
+    "HW ABT UR ANT? <AR> {oper_call} DE {bot_call} <KN>";
 
 // Topic templates — PWR (standalone, when not bundled with RIG)
-static const char* TOPIC_PWR_TERSE  = "PWR {pwr} AR KN";
+static const char* TOPIC_PWR_TERSE  = "PWR {pwr} = <AR> <KN>";
 static const char* TOPIC_PWR_NORMAL =
-    "RUNNING ABT {pwr} INTO {ant} = HW? AR {oper_call} DE {bot_call} KN";
+    "RUNNING ABT {pwr} INTO {ant} = HW? <AR> {oper_call} DE {bot_call} <KN>";
 
 // Topic templates — WX
-static const char* TOPIC_WX_TERSE  = "WX {wx} AR KN";
+static const char* TOPIC_WX_TERSE  = "WX {wx} = <AR> <KN>";
 static const char* TOPIC_WX_NORMAL =
-    "WX HR {wx} = HW? AR {oper_call} DE {bot_call} KN";
+    "WX HR {wx} = HW? <AR> {oper_call} DE {bot_call} <KN>";
 static const char* TOPIC_WX_CHATTY =
     "WX HR IS {wx} = NICE WX FER RADIO HI = "
-    "HW ABT WX UR QTH? AR {oper_call} DE {bot_call} KN";
+    "HW ABT WX UR QTH? <AR> {oper_call} DE {bot_call} <KN>";
 
 // Topic templates — AGE
-static const char* TOPIC_AGE_TERSE  = "AGE {age} YRS BEEN HAM {lic_years} YRS AR KN";
+static const char* TOPIC_AGE_TERSE  = "AGE {age} YRS = BEEN HAM {lic_years} YRS = <AR> <KN>";
 static const char* TOPIC_AGE_NORMAL =
     "AGE HR IS {age} YRS = BEEN HAM {lic_years} YRS = "
-    "HW? AR {oper_call} DE {bot_call} KN";
+    "HW? <AR> {oper_call} DE {bot_call} <KN>";
 
 // Topic templates — CONDX
 static const char* TOPIC_CONDX_TMPL =
-    "CONDX {condx} TODAY = BAND {band} = AR {oper_call} DE {bot_call} KN";
+    "CONDX {condx} TODAY = BAND {band} = <AR> {oper_call} DE {bot_call} <KN>";
 
 // Closing
 static const char* CLOSING_TERSE =
-    "{oper_call} DE {bot_call} R TNX QSO 73 SK {oper_call} DE {bot_call}";
+    "{oper_call} DE {bot_call} R TNX QSO 73 <SK> {oper_call} DE {bot_call}";
 static const char* CLOSING_NORMAL =
     "{oper_call} DE {bot_call} R TNX FER FB QSO {oper_name} = "
-    "HPE CUL = 73 73 = SK {oper_call} DE {bot_call}";
+    "HPE CUL = 73 73 = <SK> {oper_call} DE {bot_call}";
 static const char* CLOSING_CHATTY =
     "{oper_call} DE {bot_call} R VY TNX FER VY FB QSO DR {oper_name} = "
-    "HPE TO CU AGN SN = GL ES DX = 73 73 = SK {oper_call} DE {bot_call}";
+    "HPE TO CU AGN SN = GL ES DX = 73 73 = <SK> {oper_call} DE {bot_call}";
 
 
 // Ack phrases by style
@@ -214,7 +214,7 @@ std::string CWChatbot::build_cq_phrase() const {
 std::string CWChatbot::build_answer_cq_phrase() const {
     const std::string& oc = oper_data_.callsign.empty()
                             ? operator_call_ : oper_data_.callsign;
-    return oc + " DE " + persona_.callsign + " " + persona_.callsign + " AR";
+    return oc + " DE " + persona_.callsign + " " + persona_.callsign + " <AR>";
 }
 
 std::string CWChatbot::build_exchange_phrase() {
@@ -476,7 +476,12 @@ void CWChatbot::process_received_words() {
     }
 
     // ── Global: AGN / repeat request ───────────────────────────────
-    if (contains_trigger("AGN") || contains_trigger("?")) {
+    // "?" is suppressed during CQ states because the decoder often
+    // produces it from sloppy keying; AGN is always honoured except in
+    // WAIT_FOR_OPERATOR where nothing has been sent yet.
+    if (state_ != QSOState::WAIT_FOR_OPERATOR &&
+        (contains_trigger("AGN") ||
+         (state_ != QSOState::BOT_CQ && contains_trigger("?")))) {
         std::string topic_key;
         for (const auto& w : received_words_) {
             if (w == "NAME" || w == "QTH" || w == "RST" ||
@@ -760,6 +765,8 @@ void CWChatbot::tick_idle() {}
 
 void CWChatbot::tick_bot_cq() {
     if (transmitting_) return;
+    // Operator has started keying — wait for them to finish.
+    if (!current_word_.empty() || !received_words_.empty()) return;
     const unsigned long now = millis_cb_();
     if (now - cq_sent_time_ < CQ_TIMEOUT_MS) return;
 

@@ -948,7 +948,15 @@ static void app_ui_init(uint32_t rng_seed)
     lv_indev_set_read_cb(s_enc_indev, enc_read_cb);
 
     s_stack.push(build_main_menu(),
-        []() { lv_indev_set_group(s_enc_indev, s_menu_group); },
+        []() {
+            lv_indev_set_group(s_enc_indev, s_menu_group);
+            // Apply focus-key state so the first item is highlighted
+            // immediately.  Normally LVGL only sets this during encoder
+            // indev processing, so without actual input the highlight
+            // would be missing on the first frame.
+            lv_obj_t* f = lv_group_get_focused(s_menu_group);
+            if (f) lv_obj_add_state(f, LV_STATE_FOCUS_KEY);
+        },
         {});
 }
 

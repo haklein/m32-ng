@@ -201,9 +201,16 @@ void MorseTrainer::tick()
             }
 
             // Expand plain text to dot/dash string with inter-character spaces.
-            for (char c : phrase_plain_) {
-                phrase_morse_ += char_to_morse(c);
-                phrase_morse_ += ' ';
+            // Prosigns enclosed in <...> are played without inter-character
+            // gaps (e.g. <AR> → .-.-. as one symbol, not A R as two).
+            {
+                bool in_prosign = false;
+                for (char c : phrase_plain_) {
+                    if (c == '<') { in_prosign = true; continue; }
+                    if (c == '>') { in_prosign = false; phrase_morse_ += ' '; continue; }
+                    phrase_morse_ += char_to_morse(c);
+                    if (!in_prosign) phrase_morse_ += ' ';
+                }
             }
 
             last_player_state_change_ = now;
