@@ -35,7 +35,8 @@ void MorseTrainer::set_idle()
 
 void MorseTrainer::set_playing()
 {
-    current_player_state_ = PlayerState::AdvancePhrase;
+    current_player_state_     = PlayerState::AdvancePhrase;
+    last_player_state_change_ = 0;   // bypass ADVANCE_PHRASE_DELAY on next tick
 }
 
 void MorseTrainer::tame_echo_timeout()
@@ -191,6 +192,13 @@ void MorseTrainer::tick()
             player_position_ = 0;
 
             phrase_plain_ = phrase_cb_();
+
+            // Empty phrase means nothing to play — go idle.
+            if (phrase_plain_.empty()) {
+                current_player_state_ = PlayerState::Idle;
+                sidetone_cb_(false);
+                return;
+            }
 
             // Expand plain text to dot/dash string with inter-character spaces.
             for (char c : phrase_plain_) {

@@ -25,6 +25,7 @@
 #include "cw_textfield.hpp"
 #include "screen_stack.hpp"
 #include "status_bar.hpp"
+#include "cw_chatbot.h"
 
 static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
@@ -42,11 +43,12 @@ struct AppSettings {
     uint8_t  chars_group       = 0;   // 0=Alpha, 1=Alpha+Num, 2=All CW
     uint8_t  koch_lesson       = 0;   // 0=off, 1..N=first N Koch chars
     uint8_t  echo_max_repeats  = 3;   // 0=unlimited, else max failures before reveal
+    uint8_t  chatbot_qso_depth = 1;  // 0=MINIMAL, 1=STANDARD, 2=RAGCHEW
 };
 static AppSettings s_settings;
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
-enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO };
+enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── HAL pointers (assigned by platform before app_ui_init) ────────────────
@@ -83,6 +85,14 @@ static lv_obj_t*   s_echo_result_lbl = nullptr;
 static std::string s_echo_typed;
 static std::string s_pending_gen_phrase;
 
+// ── Chatbot widgets (set/cleared with chatbot screen) ─────────────────────
+static CWChatbot*   s_chatbot                = nullptr;
+static std::string  s_chatbot_pending_phrase;
+static bool         s_chatbot_tx_active      = false;
+static CWTextField* s_chatbot_bot_tf         = nullptr;
+static CWTextField* s_chatbot_oper_tf        = nullptr;
+static lv_obj_t*    s_chatbot_state_lbl      = nullptr;
+
 // ── Screen stack & LVGL encoder indev ─────────────────────────────────────
 static ScreenStack s_stack;
 static lv_indev_t* s_enc_indev        = nullptr;
@@ -97,6 +107,7 @@ static lv_obj_t* build_main_menu();
 static lv_obj_t* build_keyer_screen();
 static lv_obj_t* build_generator_screen();
 static lv_obj_t* build_echo_screen();
+static lv_obj_t* build_chatbot_screen();
 static lv_obj_t* build_settings_screen();
 static lv_obj_t* build_content_screen();
 static void      apply_settings();
@@ -161,6 +172,12 @@ static void on_letter_decoded(const std::string& letter)
             else if (letter != " ")     { s_echo_typed += letter; }
             lv_label_set_text(s_echo_rcvd_lbl, s_echo_typed.c_str());
         }
+    } else if (s_active_mode == ActiveMode::CHATBOT) {
+        if (s_chatbot) s_chatbot->symbol_received(letter);
+        if (s_chatbot_oper_tf && letter != " ") {
+            s_chatbot_oper_tf->add_string(letter);
+        }
+        s_keyer_word_pending = true;
     }
 }
 
@@ -173,6 +190,12 @@ static void apply_settings()
     s_decoder->set_decode_threshold(dit_ms * 2);
     s_trainer->set_speed_wpm(s_settings.wpm);
     s_trainer->set_max_echo_repeats(s_settings.echo_max_repeats);
+    if (s_chatbot) {
+        s_chatbot->set_speed_wpm(s_settings.wpm);
+        static const QSODepth depths[] = {
+            QSODepth::MINIMAL, QSODepth::STANDARD, QSODepth::RAGCHEW };
+        s_chatbot->set_qso_depth(depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
+    }
     s_audio->set_volume(s_settings.volume);
     if (s_active_sb) s_active_sb->set_wpm(s_settings.wpm);
 }
@@ -289,6 +312,51 @@ static lv_obj_t* build_main_menu()
                 delete s_active_sb; s_active_sb = nullptr;
             };
         } else if (idx == 3) {
+            ns = build_chatbot_screen();
+            enter_cb = []() {
+                s_active_mode = ActiveMode::CHATBOT;
+                s_chatbot = new CWChatbot(
+                    // send_cb: queue phrase for MorseTrainer to play
+                    [](const std::string& text) {
+                        s_chatbot_pending_phrase = text;
+                        s_chatbot_tx_active = true;
+                        if (s_chatbot_bot_tf)
+                            s_chatbot_bot_tf->add_string(text + " ");
+                        s_trainer->set_state(MorseTrainer::TrainerState::Player);
+                        s_trainer->set_playing();
+                    },
+                    // speed_cb: update WPM
+                    [](int wpm) {
+                        s_settings.wpm = wpm;
+                        apply_settings();
+                    },
+                    // event_cb
+                    [](QSOEvent) {},
+                    app_millis
+                );
+                s_chatbot->set_operator_call("W1TEST");
+                s_chatbot->set_speed_wpm(s_settings.wpm);
+                static const QSODepth depths[] = {
+                    QSODepth::MINIMAL, QSODepth::STANDARD, QSODepth::RAGCHEW };
+                s_chatbot->set_qso_depth(
+                    depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
+                s_chatbot->set_rng_seed((unsigned int)app_millis());
+                s_chatbot->start();
+                lv_indev_set_group(s_enc_indev, nullptr);
+            };
+            leave_cb = []() {
+                s_active_mode = ActiveMode::NONE;
+                s_trainer->set_idle();
+                s_audio->tone_off();
+                delete s_chatbot; s_chatbot = nullptr;
+                s_chatbot_pending_phrase.clear();
+                s_chatbot_tx_active = false;
+                delete s_chatbot_bot_tf;  s_chatbot_bot_tf  = nullptr;
+                delete s_chatbot_oper_tf; s_chatbot_oper_tf = nullptr;
+                s_chatbot_state_lbl = nullptr;
+                delete s_active_sb; s_active_sb = nullptr;
+            };
+        } else if (idx == 4) {
             ns = build_content_screen();
             enter_cb = []() { lv_indev_set_group(s_enc_indev, s_content_group); };
             leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
@@ -304,10 +372,11 @@ static lv_obj_t* build_main_menu()
         { LV_SYMBOL_AUDIO,    "CW Keyer"      },
         { LV_SYMBOL_PLAY,     "CW Generator"  },
         { LV_SYMBOL_LOOP,     "Echo Trainer"  },
+        { LV_SYMBOL_CALL,     "QSO Chatbot"   },
         { LV_SYMBOL_LIST,     "Content"       },
         { LV_SYMBOL_SETTINGS, "Settings"      },
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_group_add_obj(s_menu_group, btn);
         lv_obj_add_event_cb(btn, push_screen, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -418,6 +487,55 @@ static lv_obj_t* build_echo_screen()
     return scr;
 }
 
+// ── Screen: QSO Chatbot ──────────────────────────────────────────────────
+static lv_obj_t* build_chatbot_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr);
+    sb->set_mode("QSO Chatbot");
+    sb->set_wpm(s_settings.wpm);
+    s_active_sb = sb;
+
+#ifdef NATIVE_BUILD
+    lv_obj_t* hint = lv_label_create(scr);
+    lv_label_set_text(hint,
+        "Space=DIT  Enter=DAH  /=Straight  "
+        "\xe2\x86\x91/\xe2\x86\x93=WPM  E=back");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, CONTENT_Y + 2);
+    lv_coord_t base_y = CONTENT_Y + 24;
+#else
+    lv_coord_t base_y = CONTENT_Y + 2;
+#endif
+
+    // Bot label + text field (upper half)
+    lv_obj_t* bot_lbl = lv_label_create(scr);
+    lv_label_set_text(bot_lbl, "Bot:");
+    lv_obj_set_pos(bot_lbl, 4, base_y);
+
+    lv_coord_t mid_y = (SCREEN_H - base_y) / 2 + base_y;
+    s_chatbot_bot_tf = new CWTextField(scr);
+    lv_obj_set_pos(s_chatbot_bot_tf->obj(), 4, base_y + 16);
+    lv_obj_set_size(s_chatbot_bot_tf->obj(), SCREEN_W - 8, mid_y - base_y - 22);
+
+    // Operator label + text field (lower half)
+    lv_obj_t* op_lbl = lv_label_create(scr);
+    lv_label_set_text(op_lbl, "You:");
+    lv_obj_set_pos(op_lbl, 4, mid_y);
+
+    s_chatbot_oper_tf = new CWTextField(scr);
+    lv_obj_set_pos(s_chatbot_oper_tf->obj(), 4, mid_y + 16);
+    lv_obj_set_size(s_chatbot_oper_tf->obj(), SCREEN_W - 8, SCREEN_H - mid_y - 40);
+
+    // State label at bottom
+    s_chatbot_state_lbl = lv_label_create(scr);
+    lv_label_set_text(s_chatbot_state_lbl, "[IDLE]");
+    lv_obj_align(s_chatbot_state_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -4);
+
+    return scr;
+}
+
 // ── Screen: Settings ──────────────────────────────────────────────────────
 static lv_obj_t* build_settings_screen()
 {
@@ -514,6 +632,20 @@ static lv_obj_t* build_settings_screen()
     lv_obj_add_event_cb(erpt_spn, [](lv_event_t* e) {
         s_settings.echo_max_repeats =
             (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+        apply_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // QSO depth
+    make_label(compact ? "QSO depth" : "QSO Depth", 5);
+    lv_obj_t* qso_dd = lv_dropdown_create(scr);
+    lv_dropdown_set_options(qso_dd, "Minimal\nStandard\nRagchew");
+    lv_dropdown_set_selected(qso_dd, s_settings.chatbot_qso_depth);
+    lv_obj_set_width(qso_dd, 140);
+    lv_obj_set_pos(qso_dd, CTL_X, START_Y + 5 * ROW_H + CTL_OFF);
+    lv_group_add_obj(s_settings_group, qso_dd);
+    lv_obj_add_event_cb(qso_dd, [](lv_event_t* e) {
+        s_settings.chatbot_qso_depth =
+            (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
         apply_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -637,7 +769,8 @@ static void route(KeyEvent ev)
             s_enc_diff++;
             if (s_active_mode == ActiveMode::KEYER  ||
                 s_active_mode == ActiveMode::GENERATOR ||
-                s_active_mode == ActiveMode::ECHO) {
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
                 s_settings.wpm = std::min(s_settings.wpm + 1, 40);
                 apply_settings();
             }
@@ -646,7 +779,8 @@ static void route(KeyEvent ev)
             s_enc_diff--;
             if (s_active_mode == ActiveMode::KEYER  ||
                 s_active_mode == ActiveMode::GENERATOR ||
-                s_active_mode == ActiveMode::ECHO) {
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
                 s_settings.wpm = std::max(s_settings.wpm - 1, 5);
                 apply_settings();
             }
@@ -678,29 +812,34 @@ static void route(KeyEvent ev)
         case KeyEvent::PADDLE_DIT_DOWN:
         case KeyEvent::TOUCH_LEFT_DOWN:
             if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO)  s_paddle->setDotPushed(true);
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDotPushed(true);
             if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
             break;
         case KeyEvent::PADDLE_DIT_UP:
         case KeyEvent::TOUCH_LEFT_UP:
             if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO)  s_paddle->setDotPushed(false);
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDotPushed(false);
             break;
         case KeyEvent::PADDLE_DAH_DOWN:
         case KeyEvent::TOUCH_RIGHT_DOWN:
             if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO)  s_paddle->setDashPushed(true);
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDashPushed(true);
             if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
             break;
         case KeyEvent::PADDLE_DAH_UP:
         case KeyEvent::TOUCH_RIGHT_UP:
             if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO)  s_paddle->setDashPushed(false);
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDashPushed(false);
             break;
 
         case KeyEvent::STRAIGHT_DOWN:
             if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO) {
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
                 s_straight_t0 = (uint32_t)app_millis();
                 s_audio->tone_on(s_settings.freq_hz);
                 s_decoder->set_transmitting(true);
@@ -711,14 +850,16 @@ static void route(KeyEvent ev)
             break;
         case KeyEvent::STRAIGHT_UP:
             if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO) {
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
                 uint32_t dur = (uint32_t)app_millis() - s_straight_t0;
                 unsigned long dit = 1200u / (unsigned long)s_settings.wpm;
                 s_audio->tone_off();
                 s_decoder->set_transmitting(false);
                 if (dur < dit * 2) s_decoder->append_dot();
                 else               s_decoder->append_dash();
-                if (s_active_mode == ActiveMode::KEYER)
+                if (s_active_mode == ActiveMode::KEYER ||
+                    s_active_mode == ActiveMode::CHATBOT)
                     s_keyer_last_element_end_t = (unsigned long)app_millis();
             }
             break;
@@ -745,6 +886,18 @@ static void app_ui_init(uint32_t rng_seed)
             else    s_audio->tone_off();
         },
         []() -> std::string {
+            // Chatbot: return pending phrase, or empty to go Idle.
+            // Signal tx-done here (before trainer goes Idle) to avoid
+            // the 3-second ADVANCE_PHRASE_DELAY latency.
+            if (s_active_mode == ActiveMode::CHATBOT) {
+                if (!s_chatbot_pending_phrase.empty()) {
+                    std::string p = s_chatbot_pending_phrase;
+                    s_chatbot_pending_phrase.clear();
+                    return p;
+                }
+                s_chatbot_tx_active = false;
+                return std::string();
+            }
             std::string phrase = content_phrase();
             // Generator: deferred — show the just-finished word, queue the new one
             if (s_gen_tf) {
@@ -804,7 +957,8 @@ static void app_ui_init(uint32_t rng_seed)
 static void app_ui_tick()
 {
     if (s_active_mode == ActiveMode::KEYER ||
-        s_active_mode == ActiveMode::ECHO) {
+        s_active_mode == ActiveMode::ECHO ||
+        s_active_mode == ActiveMode::CHATBOT) {
         s_paddle->tick();
         s_keyer->tick();
         s_decoder->tick();
@@ -812,16 +966,46 @@ static void app_ui_tick()
     // Word-space: 7 dit after the last element ended (standard CW word space).
     // Measuring from element end (not character decode) ensures the timer can't
     // fire during the playback of a longer next character (e.g. a dah).
-    if (s_active_mode == ActiveMode::KEYER && s_keyer_word_pending && s_keyer_tf) {
+    if (s_keyer_word_pending) {
         unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
         if ((unsigned long)app_millis() - s_keyer_last_element_end_t > 7 * dit_ms) {
-            s_keyer_tf->add_string(" ");
+            if (s_active_mode == ActiveMode::KEYER && s_keyer_tf)
+                s_keyer_tf->add_string(" ");
+            if (s_active_mode == ActiveMode::CHATBOT && s_chatbot) {
+                s_chatbot->symbol_received(" ");
+                if (s_chatbot_oper_tf) s_chatbot_oper_tf->add_string(" ");
+            }
             s_keyer_word_pending = false;
         }
     }
     if (s_active_mode == ActiveMode::GENERATOR ||
         s_active_mode == ActiveMode::ECHO) {
         s_trainer->tick();
+    }
+    // Chatbot: tick trainer (for CW playback) + chatbot state machine
+    if (s_active_mode == ActiveMode::CHATBOT) {
+        s_trainer->tick();
+        if (s_chatbot) {
+            // Detect transmission complete: phrase_cb returned empty
+            // (sets s_chatbot_tx_active = false).  Must fire BEFORE chatbot
+            // tick so the chatbot sees transmitting_ = false immediately.
+            if (!s_chatbot_tx_active && s_chatbot->is_transmitting()) {
+                s_chatbot->transmission_complete();
+            }
+            s_chatbot->tick();
+            // Update state label
+            if (s_chatbot_state_lbl) {
+                static const char* STATE_NAMES[] = {
+                    "IDLE", "BOT CQ", "WAIT CQ", "ANS CQ",
+                    "EXCHANGE", "WAIT EXCH", "TOPICS", "CLOSING"
+                };
+                int si = (int)s_chatbot->state();
+                char buf[48];
+                snprintf(buf, sizeof(buf), "[%s] %s",
+                         STATE_NAMES[si], s_chatbot->bot_callsign().c_str());
+                lv_label_set_text(s_chatbot_state_lbl, buf);
+            }
+        }
     }
     lv_timer_handler();
 }
