@@ -25,6 +25,13 @@ public:
     virtual void set_string(const char* ns, const char* key,
                             const char* val) = 0;
 
+    // Binary blob — for serializing structs (e.g. AppSettings).
+    // Returns false / no-op by default; ESP32 implementation uses putBytes/getBytes.
+    virtual bool get_blob(const char* ns, const char* key,
+                          void* buf, size_t len) { (void)ns; (void)key; (void)buf; (void)len; return false; }
+    virtual void set_blob(const char* ns, const char* key,
+                          const void* buf, size_t len) { (void)ns; (void)key; (void)buf; (void)len; }
+
     // Flush pending KV writes to non-volatile storage.
     virtual void commit() = 0;
 

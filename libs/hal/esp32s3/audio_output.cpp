@@ -67,12 +67,18 @@ void PocketAudioOutput::begin()
     codec_enable_outputs();
 
     // ── 7. Headset detection ──────────────────────────────────────────────────
+    // When deriving MCLK from BCLK (no external MCLK), the internal timer
+    // clock must be enabled explicitly — headset detection uses it for
+    // debouncing and will silently fail without it.
+    codec_.modifyRegister(AIC31XX_TIMERDIVIDER, AIC31XX_TIMER_SELECT_MASK, 0);
+    codec_.modifyRegister(AIC31XX_TIMERDIVIDER, 0x3F, 0x10);
+
     codec_.enableHeadsetDetect();
     codec_.setHSDetectInt1(true);
     pinMode(CONFIG_TLV320AIC3100_INT, INPUT);
     attachInterrupt(digitalPinToInterrupt(CONFIG_TLV320AIC3100_INT),
-                    isr_headset_detect, FALLING);
-    delay(5);
+                    isr_headset_detect, RISING);
+    delay(50);   // allow debounce timer to settle
     handle_headset_event();   // initial check — mute/unmute based on plug state
 
     // ── 8. Sidetone defaults ─────────────────────────────────────────────────
@@ -151,12 +157,15 @@ void PocketAudioOutput::handle_headset_event()
 {
     // Reading the sticky interrupt flag is required — the codec will not fire
     // further INT1 pulses until the flag register has been read.
-    codec_.readRegister(AIC31XX_INTRDACFLAG);
+    uint8_t flags = codec_.readRegister(AIC31XX_INTRDACFLAG);
+    Serial.printf("AIC31XX: INT flags=0x%02X\n", flags);
 
     if (codec_.isHeadsetDetected()) {
+        Serial.println("AIC31XX: Headset detected — HP on, SPK off");
         codec_.setHeadphoneMute(false);
         codec_.setSpeakerMute(true);
     } else {
+        Serial.println("AIC31XX: Headset removed — SPK on, HP off");
         codec_.setSpeakerMute(false);
         codec_.setHeadphoneMute(true);
     }

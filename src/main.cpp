@@ -23,6 +23,7 @@
 #ifdef BOARD_POCKETWROOM
 #include <audio_output.h>   // PocketAudioOutput
 #include <key_input.h>      // PocketKeyInput, KeyEvent
+#include <storage_nvs.h>    // PocketStorage (NVS)
 #endif
 
 // ── Common display helpers ─────────────────────────────────────────────────
@@ -241,6 +242,10 @@ void setup()
     lv_label_set_text(splash, "M32 NG");
     lv_obj_center(splash);
     lv_timer_handler();
+
+    // ── Settings persistence ─────────────────────────────────────────────
+    s_storage = new PocketStorage();
+    load_settings();
 
     // ── Audio ─────────────────────────────────────────────────────────────
     Log.verboseln("Audio init");

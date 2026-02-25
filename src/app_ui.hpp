@@ -17,6 +17,7 @@
 
 #include "i_audio_output.h"
 #include "i_key_input.h"
+#include "i_storage.h"
 #include "paddle_ctl.h"
 #include "iambic_keyer.h"
 #include "morse_decoder.h"
@@ -32,6 +33,8 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
+    static constexpr uint8_t VERSION = 1;
+    uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 15;
     bool     mode_a       = false;   // false = Iambic B
     uint16_t freq_hz      = 700;
@@ -59,8 +62,26 @@ enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── HAL pointers (assigned by platform before app_ui_init) ────────────────
-static IAudioOutput* s_audio = nullptr;
-static IKeyInput*    s_keys  = nullptr;
+static IAudioOutput* s_audio   = nullptr;
+static IKeyInput*    s_keys    = nullptr;
+static IStorage*     s_storage = nullptr;  // nullptr on simulator (no persistence)
+
+// ── NVS persistence ───────────────────────────────────────────────────────
+static void save_settings()
+{
+    if (!s_storage) return;
+    s_storage->set_blob("m32", "settings", &s_settings, sizeof(s_settings));
+}
+
+static void load_settings()
+{
+    if (!s_storage) return;
+    AppSettings tmp;
+    if (s_storage->get_blob("m32", "settings", &tmp, sizeof(tmp))
+        && tmp.version == AppSettings::VERSION) {
+        s_settings = tmp;
+    }
+}
 
 // ── CW engine (keyer + echo modes) ────────────────────────────────────────
 static PaddleCtl*    s_paddle      = nullptr;
@@ -336,6 +357,7 @@ static lv_obj_t* build_main_menu()
                     [](int wpm) {
                         s_settings.wpm = wpm;
                         apply_settings();
+                        save_settings();
                     },
                     // event_cb
                     [](QSOEvent) {},
@@ -599,6 +621,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.wpm = (int)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -613,6 +636,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_add_event_cb(dd, [](lv_event_t* e) {
             s_settings.mode_a = (lv_dropdown_get_selected(lv_event_get_target_obj(e)) == 0u);
             apply_settings();
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -628,6 +652,7 @@ static lv_obj_t* build_settings_screen()
         lv_group_add_obj(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.freq_hz = (uint16_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -643,6 +668,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.volume = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             s_audio->set_volume(s_settings.volume);
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -657,6 +683,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_add_event_cb(dd, [](lv_event_t* e) {
             s_settings.text_font_size =
                 (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -673,6 +700,7 @@ static lv_obj_t* build_settings_screen()
             s_settings.echo_max_repeats =
                 (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -688,6 +716,7 @@ static lv_obj_t* build_settings_screen()
             s_settings.chatbot_qso_depth =
                 (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
             apply_settings();
+            save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
@@ -746,18 +775,22 @@ static lv_obj_t* build_content_screen()
     lv_obj_add_event_cb(cb_words, [](lv_event_t* e) {
         s_settings.cont_words = (lv_obj_get_state(lv_event_get_target_obj(e))
                                  & LV_STATE_CHECKED) != 0;
+        save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(cb_abbr, [](lv_event_t* e) {
         s_settings.cont_abbrevs = (lv_obj_get_state(lv_event_get_target_obj(e))
                                    & LV_STATE_CHECKED) != 0;
+        save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(cb_calls, [](lv_event_t* e) {
         s_settings.cont_calls = (lv_obj_get_state(lv_event_get_target_obj(e))
                                  & LV_STATE_CHECKED) != 0;
+        save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(cb_chars, [](lv_event_t* e) {
         s_settings.cont_chars = (lv_obj_get_state(lv_event_get_target_obj(e))
                                  & LV_STATE_CHECKED) != 0;
+        save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     // Row 2: Chars group dropdown  |  Koch spinbox
@@ -776,6 +809,7 @@ static lv_obj_t* build_content_screen()
     lv_obj_add_event_cb(cg_dd, [](lv_event_t* e) {
         s_settings.chars_group = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
+        save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_obj_t* kl_lbl = lv_label_create(scr);
@@ -792,6 +826,7 @@ static lv_obj_t* build_content_screen()
     lv_obj_add_event_cb(koch_spn, [](lv_event_t* e) {
         s_settings.koch_lesson = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
+        save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
 #ifdef NATIVE_BUILD
@@ -815,6 +850,7 @@ static void route(KeyEvent ev)
                 s_active_mode == ActiveMode::CHATBOT) {
                 s_settings.wpm = std::min(s_settings.wpm + 1, 40);
                 apply_settings();
+                save_settings();
             }
             break;
         case KeyEvent::ENCODER_CCW:
@@ -825,6 +861,7 @@ static void route(KeyEvent ev)
                 s_active_mode == ActiveMode::CHATBOT) {
                 s_settings.wpm = std::max(s_settings.wpm - 1, 5);
                 apply_settings();
+                save_settings();
             }
             break;
 
