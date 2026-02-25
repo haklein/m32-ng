@@ -31,4 +31,8 @@ public:
 
     // Power down audio hardware before deep sleep.
     virtual void suspend() = 0;
+
+    // Poll for asynchronous hardware events (e.g. headphone plug/unplug).
+    // Call from the main loop.  Default is a no-op.
+    virtual void poll() {}
 };

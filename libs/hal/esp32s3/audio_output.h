@@ -34,6 +34,7 @@ public:
     void set_adsr(float attack_s, float decay_s,
                   float sustain_level, float release_s) override;
     void suspend() override;
+    void poll() override;
 
 private:
     I2S_Sidetone   sidetone_;
@@ -41,6 +42,7 @@ private:
 
     void codec_init_clocking();
     void codec_enable_outputs();
+    void handle_headset_event();
 };
 
 #endif // BOARD_POCKETWROOM

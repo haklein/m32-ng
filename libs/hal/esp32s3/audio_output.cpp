@@ -2,6 +2,14 @@
 
 #include "audio_output.h"
 #include <Arduino.h>
+#include <tlv320aic31xx_regs.h>
+
+// ── Headset detect ISR ───────────────────────────────────────────────────────
+// Codec INT1 (GPIO1) is wired to ESP32-S3 GPIO CONFIG_TLV320AIC3100_INT.
+// It goes low when a headset plug/unplug event occurs and stays low until
+// the sticky interrupt flag register (AIC31XX_INTRDACFLAG) is read.
+static volatile bool s_hp_interrupt = false;
+static void IRAM_ATTR isr_headset_detect() { s_hp_interrupt = true; }
 
 // ── PLL constants for 48 kHz operation ───────────────────────────────────────
 //
@@ -58,7 +66,16 @@ void PocketAudioOutput::begin()
 
     codec_enable_outputs();
 
-    // ── 7. Sidetone defaults ─────────────────────────────────────────────────
+    // ── 7. Headset detection ──────────────────────────────────────────────────
+    codec_.enableHeadsetDetect();
+    codec_.setHSDetectInt1(true);
+    pinMode(CONFIG_TLV320AIC3100_INT, INPUT);
+    attachInterrupt(digitalPinToInterrupt(CONFIG_TLV320AIC3100_INT),
+                    isr_headset_detect, FALLING);
+    delay(5);
+    handle_headset_event();   // initial check — mute/unmute based on plug state
+
+    // ── 8. Sidetone defaults ─────────────────────────────────────────────────
     sidetone_.setFrequency(DEFAULT_FREQ);
     sidetone_.setVolume(DEFAULT_VOL);
     sidetone_.setADSR(0.005f, 0.0f, 1.0f, 0.005f);
@@ -120,6 +137,29 @@ void PocketAudioOutput::set_adsr(float attack_s, float decay_s,
                                    float sustain_level, float release_s)
 {
     sidetone_.setADSR(attack_s, decay_s, sustain_level, release_s);
+}
+
+void PocketAudioOutput::poll()
+{
+    if (s_hp_interrupt) {
+        s_hp_interrupt = false;
+        handle_headset_event();
+    }
+}
+
+void PocketAudioOutput::handle_headset_event()
+{
+    // Reading the sticky interrupt flag is required — the codec will not fire
+    // further INT1 pulses until the flag register has been read.
+    codec_.readRegister(AIC31XX_INTRDACFLAG);
+
+    if (codec_.isHeadsetDetected()) {
+        codec_.setHeadphoneMute(false);
+        codec_.setSpeakerMute(true);
+    } else {
+        codec_.setSpeakerMute(false);
+        codec_.setHeadphoneMute(true);
+    }
 }
 
 void PocketAudioOutput::suspend()

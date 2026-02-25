@@ -839,11 +839,19 @@ static void route(KeyEvent ev)
                 s_enc_press_frames = 2;
             }
             break;
-        case KeyEvent::BUTTON_ENCODER_LONG:
-            s_stack.pop();
-            if (s_stack.size() == 1)
-                lv_indev_set_group(s_enc_indev, s_menu_group);
+        case KeyEvent::BUTTON_ENCODER_LONG: {
+            // If the active encoder group is in edit mode (e.g. editing a
+            // spinbox value), leave edit mode instead of popping the screen.
+            lv_group_t* grp = lv_indev_get_group(s_enc_indev);
+            if (grp && lv_group_get_editing(grp)) {
+                lv_group_set_editing(grp, false);
+            } else {
+                s_stack.pop();
+                if (s_stack.size() == 1)
+                    lv_indev_set_group(s_enc_indev, s_menu_group);
+            }
             break;
+        }
 
         case KeyEvent::BUTTON_AUX_SHORT:
             if (s_active_mode == ActiveMode::GENERATOR ||
@@ -1016,6 +1024,8 @@ static void app_ui_init(uint32_t rng_seed)
 // Call every loop iteration after polling and routing key events.
 static void app_ui_tick()
 {
+    s_audio->poll();
+
     if (s_active_mode == ActiveMode::KEYER ||
         s_active_mode == ActiveMode::ECHO ||
         s_active_mode == ActiveMode::CHATBOT) {
