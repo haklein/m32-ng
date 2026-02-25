@@ -45,8 +45,14 @@ struct AppSettings {
     uint8_t  koch_lesson       = 0;   // 0=off, 1..N=first N Koch chars
     uint8_t  echo_max_repeats  = 3;   // 0=unlimited, else max failures before reveal
     uint8_t  chatbot_qso_depth = 1;  // 0=MINIMAL, 1=STANDARD, 2=RAGCHEW
+    uint8_t  text_font_size    = 0;  // 0=Normal (20px), 1=Large (28px)
 };
 static AppSettings s_settings;
+
+static const lv_font_t* cw_text_font()
+{
+    return s_settings.text_font_size == 0 ? &lv_font_intel_20 : &lv_font_intel_28;
+}
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
 enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT };
@@ -408,7 +414,7 @@ static lv_obj_t* build_keyer_screen()
     lv_coord_t tf_y = CONTENT_Y + 2;
 #endif
 
-    s_keyer_tf = new CWTextField(scr);
+    s_keyer_tf = new CWTextField(scr, cw_text_font());
     lv_obj_set_pos(s_keyer_tf->obj(), 4, tf_y);
     lv_obj_set_size(s_keyer_tf->obj(), SCREEN_W - 8, SCREEN_H - tf_y - 4);
 
@@ -435,7 +441,7 @@ static lv_obj_t* build_generator_screen()
     lv_coord_t tf_y = CONTENT_Y + 2;
 #endif
 
-    s_gen_tf = new CWTextField(scr);
+    s_gen_tf = new CWTextField(scr, cw_text_font());
     lv_obj_set_pos(s_gen_tf->obj(), 4, tf_y);
     lv_obj_set_size(s_gen_tf->obj(), SCREEN_W - 8, SCREEN_H - tf_y - 4);
 
@@ -463,7 +469,7 @@ static lv_obj_t* build_echo_screen()
 
     s_echo_target_lbl = lv_label_create(scr);
     lv_label_set_text(s_echo_target_lbl, "?");
-    lv_obj_set_style_text_font(s_echo_target_lbl, &lv_font_intel_20, 0);
+    lv_obj_set_style_text_font(s_echo_target_lbl, cw_text_font(), 0);
     lv_obj_set_pos(s_echo_target_lbl, 60, ROW1_Y + 6);
     lv_obj_set_width(s_echo_target_lbl, SCREEN_W - 68);
 
@@ -473,7 +479,7 @@ static lv_obj_t* build_echo_screen()
 
     s_echo_rcvd_lbl = lv_label_create(scr);
     lv_label_set_text(s_echo_rcvd_lbl, "");
-    lv_obj_set_style_text_font(s_echo_rcvd_lbl, &lv_font_intel_20, 0);
+    lv_obj_set_style_text_font(s_echo_rcvd_lbl, cw_text_font(), 0);
     lv_obj_set_pos(s_echo_rcvd_lbl, 60, ROW2_Y + 6);
     lv_obj_set_width(s_echo_rcvd_lbl, SCREEN_W - 68);
 
@@ -518,7 +524,7 @@ static lv_obj_t* build_chatbot_screen()
     lv_obj_set_pos(bot_lbl, 4, base_y);
 
     lv_coord_t mid_y = (SCREEN_H - base_y) / 2 + base_y;
-    s_chatbot_bot_tf = new CWTextField(scr);
+    s_chatbot_bot_tf = new CWTextField(scr, cw_text_font());
     lv_obj_set_pos(s_chatbot_bot_tf->obj(), 4, base_y + 16);
     lv_obj_set_size(s_chatbot_bot_tf->obj(), SCREEN_W - 8, mid_y - base_y - 22);
 
@@ -527,7 +533,7 @@ static lv_obj_t* build_chatbot_screen()
     lv_label_set_text(op_lbl, "You:");
     lv_obj_set_pos(op_lbl, 4, mid_y);
 
-    s_chatbot_oper_tf = new CWTextField(scr);
+    s_chatbot_oper_tf = new CWTextField(scr, cw_text_font());
     lv_obj_set_pos(s_chatbot_oper_tf->obj(), 4, mid_y + 16);
     lv_obj_set_size(s_chatbot_oper_tf->obj(), SCREEN_W - 8, SCREEN_H - mid_y - 40);
 
@@ -553,104 +559,137 @@ static lv_obj_t* build_settings_screen()
     if (s_settings_group) lv_group_del(s_settings_group);
     s_settings_group = lv_group_create();
 
-    // Layout adapts to screen height: compact (≤200 px) vs. roomy (>200 px)
     const bool compact = (SCREEN_H <= 200);
-    const lv_coord_t LBL_X   = compact ?  8 : 16;
-    const lv_coord_t CTL_X   = SCREEN_W / 2 + 20;
-    const lv_coord_t ROW_H   = compact ? 34 : 50;
-    const lv_coord_t START_Y = CONTENT_Y + (compact ? 4 : 10);
-    const lv_coord_t CTL_OFF = compact ? 2 : 6;
-    const lv_coord_t LBL_OFF = compact ? 10 : 14;
+    const lv_coord_t PAD = compact ? 4 : 8;
 
-    auto make_label = [&](const char* text, int row) {
-        lv_obj_t* lbl = lv_label_create(scr);
-        lv_label_set_text(lbl, text);
-        lv_obj_set_pos(lbl, LBL_X, START_Y + row * ROW_H + LBL_OFF);
+    // Scrollable container below the status bar
+    lv_obj_t* cont = lv_obj_create(scr);
+    lv_obj_set_pos(cont, 0, CONTENT_Y);
+    lv_obj_set_size(cont, SCREEN_W, SCREEN_H - CONTENT_Y);
+    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(cont, PAD, 0);
+    lv_obj_set_style_pad_all(cont, PAD, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+
+    // Helper: create a label + control row
+    auto make_row = [&](const char* label_text) -> lv_obj_t* {
+        lv_obj_t* row = lv_obj_create(cont);
+        lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(row, 2, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_t* lbl = lv_label_create(row);
+        lv_label_set_text(lbl, label_text);
+        return row;
     };
 
     // WPM
-    make_label("Speed (WPM)", 0);
-    lv_obj_t* wpm_spn = lv_spinbox_create(scr);
-    lv_spinbox_set_range(wpm_spn, 5, 40);
-    lv_spinbox_set_digit_count(wpm_spn, 2);
-    lv_spinbox_set_value(wpm_spn, s_settings.wpm);
-    lv_obj_set_width(wpm_spn, 100);
-    lv_obj_set_pos(wpm_spn, CTL_X, START_Y + 0 * ROW_H + CTL_OFF);
-    lv_group_add_obj(s_settings_group, wpm_spn);
-    lv_obj_add_event_cb(wpm_spn, [](lv_event_t* e) {
-        s_settings.wpm = (int)lv_spinbox_get_value(lv_event_get_target_obj(e));
-        apply_settings();
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    {
+        lv_obj_t* row = make_row("Speed (WPM)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 5, 40);
+        lv_spinbox_set_digit_count(spn, 2);
+        lv_spinbox_set_value(spn, s_settings.wpm);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.wpm = (int)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            apply_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
 
     // Keyer mode
-    make_label("Keyer Mode", 1);
-    lv_obj_t* mode_dd = lv_dropdown_create(scr);
-    lv_dropdown_set_options(mode_dd, "Iambic A\nIambic B");
-    lv_dropdown_set_selected(mode_dd, s_settings.mode_a ? 0u : 1u);
-    lv_obj_set_width(mode_dd, 140);
-    lv_obj_set_pos(mode_dd, CTL_X, START_Y + 1 * ROW_H + CTL_OFF);
-    lv_group_add_obj(s_settings_group, mode_dd);
-    lv_obj_add_event_cb(mode_dd, [](lv_event_t* e) {
-        s_settings.mode_a = (lv_dropdown_get_selected(lv_event_get_target_obj(e)) == 0u);
-        apply_settings();
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    {
+        lv_obj_t* row = make_row("Keyer Mode");
+        lv_obj_t* dd = lv_dropdown_create(row);
+        lv_dropdown_set_options(dd, "Iambic A\nIambic B");
+        lv_dropdown_set_selected(dd, s_settings.mode_a ? 0u : 1u);
+        lv_obj_set_width(dd, 140);
+        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+            s_settings.mode_a = (lv_dropdown_get_selected(lv_event_get_target_obj(e)) == 0u);
+            apply_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
 
     // Frequency
-    make_label(compact ? "Freq (Hz)" : "Frequency (Hz)", 2);
-    lv_obj_t* freq_spn = lv_spinbox_create(scr);
-    lv_spinbox_set_range(freq_spn, 400, 900);
-    lv_spinbox_set_digit_count(freq_spn, 3);
-    lv_spinbox_set_step(freq_spn, 10);
-    lv_spinbox_set_value(freq_spn, s_settings.freq_hz);
-    lv_obj_set_width(freq_spn, compact ? (lv_coord_t)100 : (lv_coord_t)120);
-    lv_obj_set_pos(freq_spn, CTL_X, START_Y + 2 * ROW_H + CTL_OFF);
-    lv_group_add_obj(s_settings_group, freq_spn);
-    lv_obj_add_event_cb(freq_spn, [](lv_event_t* e) {
-        s_settings.freq_hz = (uint16_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    {
+        lv_obj_t* row = make_row("Freq (Hz)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 400, 900);
+        lv_spinbox_set_digit_count(spn, 3);
+        lv_spinbox_set_step(spn, 10);
+        lv_spinbox_set_value(spn, s_settings.freq_hz);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.freq_hz = (uint16_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
 
     // Volume
-    make_label("Volume (0-10)", 3);
-    lv_obj_t* vol_spn = lv_spinbox_create(scr);
-    lv_spinbox_set_range(vol_spn, 0, 10);
-    lv_spinbox_set_digit_count(vol_spn, 1);
-    lv_spinbox_set_value(vol_spn, s_settings.volume);
-    lv_obj_set_width(vol_spn, 80);
-    lv_obj_set_pos(vol_spn, CTL_X, START_Y + 3 * ROW_H + CTL_OFF);
-    lv_group_add_obj(s_settings_group, vol_spn);
-    lv_obj_add_event_cb(vol_spn, [](lv_event_t* e) {
-        s_settings.volume = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
-        s_audio->set_volume(s_settings.volume);
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    {
+        lv_obj_t* row = make_row("Volume (0-10)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 0, 10);
+        lv_spinbox_set_digit_count(spn, 1);
+        lv_spinbox_set_value(spn, s_settings.volume);
+        lv_obj_set_width(spn, 80);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.volume = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            s_audio->set_volume(s_settings.volume);
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // Text Size
+    {
+        lv_obj_t* row = make_row("Text Size");
+        lv_obj_t* dd = lv_dropdown_create(row);
+        lv_dropdown_set_options(dd, "Normal\nLarge");
+        lv_dropdown_set_selected(dd, s_settings.text_font_size);
+        lv_obj_set_width(dd, 140);
+        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+            s_settings.text_font_size =
+                (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
 
     // Echo max repeats
-    make_label(compact ? "Echo rpt (0=\xe2\x88\x9e)" : "Echo max rpt (0=\xe2\x88\x9e)", 4);
-    lv_obj_t* erpt_spn = lv_spinbox_create(scr);
-    lv_spinbox_set_range(erpt_spn, 0, 9);
-    lv_spinbox_set_digit_count(erpt_spn, 1);
-    lv_spinbox_set_value(erpt_spn, s_settings.echo_max_repeats);
-    lv_obj_set_width(erpt_spn, 80);
-    lv_obj_set_pos(erpt_spn, CTL_X, START_Y + 4 * ROW_H + CTL_OFF);
-    lv_group_add_obj(s_settings_group, erpt_spn);
-    lv_obj_add_event_cb(erpt_spn, [](lv_event_t* e) {
-        s_settings.echo_max_repeats =
-            (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
-        apply_settings();
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    {
+        lv_obj_t* row = make_row("Echo rpt (0=\xe2\x88\x9e)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 0, 9);
+        lv_spinbox_set_digit_count(spn, 1);
+        lv_spinbox_set_value(spn, s_settings.echo_max_repeats);
+        lv_obj_set_width(spn, 80);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.echo_max_repeats =
+                (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            apply_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
 
     // QSO depth
-    make_label(compact ? "QSO depth" : "QSO Depth", 5);
-    lv_obj_t* qso_dd = lv_dropdown_create(scr);
-    lv_dropdown_set_options(qso_dd, "Minimal\nStandard\nRagchew");
-    lv_dropdown_set_selected(qso_dd, s_settings.chatbot_qso_depth);
-    lv_obj_set_width(qso_dd, 140);
-    lv_obj_set_pos(qso_dd, CTL_X, START_Y + 5 * ROW_H + CTL_OFF);
-    lv_group_add_obj(s_settings_group, qso_dd);
-    lv_obj_add_event_cb(qso_dd, [](lv_event_t* e) {
-        s_settings.chatbot_qso_depth =
-            (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
-        apply_settings();
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    {
+        lv_obj_t* row = make_row("QSO Depth");
+        lv_obj_t* dd = lv_dropdown_create(row);
+        lv_dropdown_set_options(dd, "Minimal\nStandard\nRagchew");
+        lv_dropdown_set_selected(dd, s_settings.chatbot_qso_depth);
+        lv_obj_set_width(dd, 140);
+        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+            s_settings.chatbot_qso_depth =
+                (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
+            apply_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
 
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
@@ -790,7 +829,15 @@ static void route(KeyEvent ev)
             break;
 
         case KeyEvent::BUTTON_ENCODER_SHORT:
-            s_enc_press_frames = 2;
+            if (s_active_mode == ActiveMode::GENERATOR ||
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
+                s_gen_paused = !s_gen_paused;
+                if (s_gen_paused) s_trainer->set_idle();
+                else              s_trainer->set_playing();
+            } else {
+                s_enc_press_frames = 2;
+            }
             break;
         case KeyEvent::BUTTON_ENCODER_LONG:
             s_stack.pop();
@@ -799,7 +846,9 @@ static void route(KeyEvent ev)
             break;
 
         case KeyEvent::BUTTON_AUX_SHORT:
-            if (s_active_mode == ActiveMode::GENERATOR) {
+            if (s_active_mode == ActiveMode::GENERATOR ||
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
                 s_gen_paused = !s_gen_paused;
                 if (s_gen_paused) s_trainer->set_idle();
                 else              s_trainer->set_playing();
