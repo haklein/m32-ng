@@ -1,9 +1,11 @@
 #include "cw_textfield.hpp"
+#include "lv_font_intel.h"
 
 CWTextField::CWTextField(lv_obj_t* parent)
 {
     spangroup_ = lv_spangroup_create(parent);
     lv_obj_set_size(spangroup_, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_text_font(spangroup_, &lv_font_intel_20, 0);
     lv_spangroup_set_align(spangroup_, LV_TEXT_ALIGN_LEFT);
     lv_spangroup_set_overflow(spangroup_, LV_SPAN_OVERFLOW_CLIP);
     lv_spangroup_set_mode(spangroup_, LV_SPAN_MODE_BREAK);

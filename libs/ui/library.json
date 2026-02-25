@@ -3,5 +3,9 @@
   "version": "0.1.0",
   "description": "LVGL UI components for the Morserino-32-NG trainer",
   "frameworks": ["*"],
-  "platforms": ["*"]
+  "platforms": ["*"],
+  "build": {
+    "srcDir": ".",
+    "srcFilter": ["+<src/>", "+<fonts/*.c>"]
+  }
 }

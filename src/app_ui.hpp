@@ -26,6 +26,7 @@
 #include "screen_stack.hpp"
 #include "status_bar.hpp"
 #include "cw_chatbot.h"
+#include "lv_font_intel.h"
 
 static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
@@ -462,6 +463,7 @@ static lv_obj_t* build_echo_screen()
 
     s_echo_target_lbl = lv_label_create(scr);
     lv_label_set_text(s_echo_target_lbl, "?");
+    lv_obj_set_style_text_font(s_echo_target_lbl, &lv_font_intel_20, 0);
     lv_obj_set_pos(s_echo_target_lbl, 60, ROW1_Y + 6);
     lv_obj_set_width(s_echo_target_lbl, SCREEN_W - 68);
 
@@ -471,6 +473,7 @@ static lv_obj_t* build_echo_screen()
 
     s_echo_rcvd_lbl = lv_label_create(scr);
     lv_label_set_text(s_echo_rcvd_lbl, "");
+    lv_obj_set_style_text_font(s_echo_rcvd_lbl, &lv_font_intel_20, 0);
     lv_obj_set_pos(s_echo_rcvd_lbl, 60, ROW2_Y + 6);
     lv_obj_set_width(s_echo_rcvd_lbl, SCREEN_W - 68);
 
