@@ -84,7 +84,10 @@ private:
     static constexpr int ERROR_DELAY_MS              = 1000;
     static constexpr int REVEAL_DELAY_MS             = 2000;
     static constexpr int ECHO_START_RECEIVE_DELAY_MS = 2000;
-    static constexpr int ADVANCE_PHRASE_DELAY_MS     = 3000;
+
+    // Inter-phrase pause scales with WPM: ~4 word-spaces (28 dit-lengths).
+    // At 15 WPM ≈ 2.2 s, at 30 WPM ≈ 1.1 s, at 5 WPM ≈ 6.7 s.
+    int advance_phrase_delay_ms() const { return dot_delay_ms_ * 28; }
 
     sidetone_fn    sidetone_cb_;
     echo_result_fn result_cb_;

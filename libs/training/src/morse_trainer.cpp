@@ -117,8 +117,7 @@ void MorseTrainer::tick()
                 current_echo_state_   = EchoState::Playing;
                 current_player_state_ = PlayerState::AdvancePhrase;
                 // Bypass AdvancePhrase's own delay so next phrase starts quickly.
-                last_player_state_change_ =
-                    now - static_cast<uint32_t>(ADVANCE_PHRASE_DELAY_MS);
+                last_player_state_change_ = 0;
             }
             break;
 
@@ -187,7 +186,7 @@ void MorseTrainer::tick()
         break;
 
     case PlayerState::AdvancePhrase:
-        if (now > last_player_state_change_ + ADVANCE_PHRASE_DELAY_MS) {
+        if (now > last_player_state_change_ + static_cast<uint32_t>(advance_phrase_delay_ms())) {
             phrase_morse_.clear();
             player_position_ = 0;
 
