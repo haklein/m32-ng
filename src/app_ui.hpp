@@ -305,11 +305,11 @@ static lv_obj_t* build_main_menu()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
+#ifdef NATIVE_BUILD
     lv_obj_t* title = lv_label_create(scr);
     lv_label_set_text(title, "Morserino-32-NG");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
-#ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93 = scroll    e = select    Esc = quit");
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 26);
@@ -320,8 +320,10 @@ static lv_obj_t* build_main_menu()
     lv_obj_set_size(list, SCREEN_W - 60, SCREEN_H - 100);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 20);
 #else
-    lv_obj_set_size(list, SCREEN_W - 40, SCREEN_H - 44);
-    lv_obj_align(list, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_size(list, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(list, 0, 0);
+    lv_obj_set_style_radius(list, 0, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
 #endif
 
     if (s_menu_group) lv_group_del(s_menu_group);
