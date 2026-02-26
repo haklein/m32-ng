@@ -3,6 +3,7 @@
 #include "../data/abbrevs.h"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 // Adapted from m5core2-cwtrainer/lib/TextGenerators.
 // Algorithmic content preserved; Arduino::String -> std::string,
@@ -15,12 +16,29 @@ int TextGenerators::rng_range(int lo, int hi)
     return std::uniform_int_distribution<int>(lo, hi - 1)(rng_);
 }
 
+// Weighted random selection from Oxford 5000 word list.
+// Words with higher frequency weights appear more often.
 std::string TextGenerators::random_word(int max_length)
 {
-    using namespace EnglishWords;
-    if (max_length > 5) max_length = 0;
-    int start = (max_length != 0) ? WORDS_POINTER[max_length + 1] : 0;
-    return words[rng_range(start, WORDS_NUMBER_OF_ELEMENTS)];
+    // Compute total weight for eligible words
+    long total_weight = 0;
+    for (size_t i = 0; i < OXFORD_WORD_COUNT; ++i) {
+        if (max_length <= 0 || (int)std::strlen(words[i].word) <= max_length)
+            total_weight += words[i].weight;
+    }
+    if (total_weight == 0) return "cq";
+
+    // Pick a random point in the cumulative weight
+    long r = std::uniform_int_distribution<long>(0, total_weight - 1)(rng_);
+    long cumulative = 0;
+    for (size_t i = 0; i < OXFORD_WORD_COUNT; ++i) {
+        if (max_length <= 0 || (int)std::strlen(words[i].word) <= max_length) {
+            cumulative += words[i].weight;
+            if (r < cumulative)
+                return words[i].word;
+        }
+    }
+    return words[0].word;
 }
 
 std::string TextGenerators::random_abbrev(int max_length)

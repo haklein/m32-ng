@@ -34,7 +34,7 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 5;
+    static constexpr uint8_t VERSION = 6;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 15;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -57,6 +57,7 @@ struct AppSettings {
     bool     paddle_swap    = false; // swap dit/dah on touch paddles
     bool     ext_key_swap   = false; // swap dit/dah on ext key (iambic mode only)
     bool     screen_flip    = false; // upside-down rotation (lefty mode)
+    uint8_t  word_max_length = 0; // 0=any, 2-15 max chars per word/abbrev/call
     // Sleep (VERSION 5)
     uint8_t  sleep_timeout_min = 5; // 0=disabled, 1-60 minutes
 };
@@ -360,17 +361,19 @@ static std::string content_phrase()
     if (s_settings.cont_abbrevs) types[nt++] = 1;
     if (s_settings.cont_calls)   types[nt++] = 2;
     if (s_settings.cont_chars)   types[nt++] = 3;
-    if (nt == 0) return s_gen->random_word();   // fallback: always something
+    int ml = (int)s_settings.word_max_length;
+    if (nt == 0) return s_gen->random_word(ml);   // fallback: always something
     int choice = types[std::uniform_int_distribution<int>(0, nt - 1)(s_rng)];
     static const RandomOption char_opts[] = { OPT_ALPHA, OPT_ALNUM, OPT_ALL };
     switch (choice) {
-        case 0: return s_gen->random_word();
-        case 1: return s_gen->random_abbrev();
-        case 2: return s_gen->random_callsign();
+        case 0: return s_gen->random_word(ml);
+        case 1: return s_gen->random_abbrev(ml);
+        case 2: return s_gen->random_callsign(ml);
         case 3: return s_gen->random_chars(
-                    5, char_opts[std::min((int)s_settings.chars_group, 2)]);
+                    ml > 0 ? ml : 5,
+                    char_opts[std::min((int)s_settings.chars_group, 2)]);
     }
-    return s_gen->random_word();
+    return s_gen->random_word(ml);
 }
 
 // ── Screen: Main Menu ──────────────────────────────────────────────────────
@@ -1041,22 +1044,39 @@ static lv_obj_t* build_content_screen()
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Row 3: Koch order dropdown (full width)
+    // Row 3: Koch order dropdown  |  Max length spinbox
     const lv_coord_t R3_Y = START_Y + 3 * ROW_H;
 
     lv_obj_t* ko_lbl = lv_label_create(scr);
-    lv_label_set_text(ko_lbl, "Koch Order:");
+    lv_label_set_text(ko_lbl, "Order:");
     lv_obj_set_pos(ko_lbl, LBL_X, R3_Y + LBL_OFF);
 
     lv_obj_t* ko_dd = lv_dropdown_create(scr);
     lv_dropdown_set_options(ko_dd, "LCWO\nMorserino\nCW Academy\nLICW");
     lv_dropdown_set_selected(ko_dd, std::min((uint8_t)(KOCH_ORDER_COUNT - 1),
                                              s_settings.koch_order));
-    lv_obj_set_width(ko_dd, compact ? 130 : 160);
-    lv_obj_set_pos(ko_dd, LBL_X + (compact ? 80 : 100), R3_Y + CTL_OFF);
+    lv_obj_set_width(ko_dd, compact ? 100 : 130);
+    lv_obj_set_pos(ko_dd, LBL_X + (compact ? 48 : 60), R3_Y + CTL_OFF);
     lv_group_add_obj(s_content_group, ko_dd);
     lv_obj_add_event_cb(ko_dd, [](lv_event_t* e) {
         s_settings.koch_order = (uint8_t)lv_dropdown_get_selected(
+            lv_event_get_target_obj(e));
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* ml_lbl = lv_label_create(scr);
+    lv_label_set_text(ml_lbl, "Length:");
+    lv_obj_set_pos(ml_lbl, COL2_X, R3_Y + LBL_OFF);
+
+    lv_obj_t* ml_spn = lv_spinbox_create(scr);
+    lv_spinbox_set_range(ml_spn, 0, 15);
+    lv_spinbox_set_digit_count(ml_spn, 2);
+    lv_spinbox_set_value(ml_spn, s_settings.word_max_length);
+    lv_obj_set_width(ml_spn, compact ? 80 : 100);
+    lv_obj_set_pos(ml_spn, COL2_X + (compact ? 40 : 70), R3_Y + CTL_OFF);
+    lv_group_add_obj(s_content_group, ml_spn);
+    lv_obj_add_event_cb(ml_spn, [](lv_event_t* e) {
+        s_settings.word_max_length = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
