@@ -34,7 +34,7 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 4;
+    static constexpr uint8_t VERSION = 5;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 15;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -57,6 +57,8 @@ struct AppSettings {
     bool     paddle_swap    = false; // swap dit/dah on touch paddles
     bool     ext_key_swap   = false; // swap dit/dah on ext key (iambic mode only)
     bool     screen_flip    = false; // upside-down rotation (lefty mode)
+    // Sleep (VERSION 5)
+    uint8_t  sleep_timeout_min = 5; // 0=disabled, 1-60 minutes
 };
 static AppSettings s_settings;
 
@@ -184,6 +186,15 @@ static void enter_encoder_mode(EncoderMode mode)
 
 // ── Screen flip callback (set by platform TU; nullptr on simulator) ───────
 static void (*s_on_screen_flip)(bool flip) = nullptr;
+
+// ── Deep sleep (set by platform TU; nullptr on simulator) ────────────────
+static void (*s_enter_deep_sleep)() = nullptr;
+static unsigned long s_last_activity_t = 0;
+
+static void reset_activity_timer()
+{
+    s_last_activity_t = (unsigned long)app_millis();
+}
 
 static bool cw_mode_active();  // defined below
 
@@ -905,6 +916,22 @@ static lv_obj_t* build_settings_screen()
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
+    // Sleep timeout (minutes, 0 = off)
+    {
+        lv_obj_t* row = make_row("Sleep (min, 0=off)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 0, 60);
+        lv_spinbox_set_digit_count(spn, 2);
+        lv_spinbox_set_value(spn, s_settings.sleep_timeout_min);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.sleep_timeout_min =
+                (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=edit value    E=back");
@@ -1046,6 +1073,7 @@ static lv_obj_t* build_content_screen()
 // ── Key event router ───────────────────────────────────────────────────────
 static void route(KeyEvent ev)
 {
+    reset_activity_timer();
     switch (ev) {
         case KeyEvent::ENCODER_CW:
             s_enc_diff++;
@@ -1221,6 +1249,7 @@ static void route(KeyEvent ev)
 // Call after s_audio and s_keys are assigned.
 static void app_ui_init(uint32_t rng_seed)
 {
+    s_last_activity_t = (unsigned long)app_millis();
     unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
     s_rng.seed(rng_seed);
     s_gen     = new TextGenerators(s_rng);
@@ -1316,6 +1345,14 @@ static void app_ui_init(uint32_t rng_seed)
 static void app_ui_tick()
 {
     s_audio->poll();
+
+    // ── Deep sleep on inactivity ─────────────────────────────────────────
+    if (s_settings.sleep_timeout_min > 0 &&
+        s_active_mode != ActiveMode::GENERATOR &&
+        (unsigned long)(app_millis() - s_last_activity_t) >=
+            (unsigned long)s_settings.sleep_timeout_min * 60000UL) {
+        if (s_enter_deep_sleep) s_enter_deep_sleep();
+    }
 
     // FN double-press timeout: if no second press arrived, execute single-press
     if (s_fn_pending &&

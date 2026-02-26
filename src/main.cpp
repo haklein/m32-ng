@@ -24,6 +24,7 @@
 #include <audio_output.h>   // PocketAudioOutput
 #include <key_input.h>      // PocketKeyInput, KeyEvent
 #include <storage_nvs.h>    // PocketStorage (NVS)
+#include <esp_sleep.h>      // deep sleep + GPIO wakeup
 #endif
 
 // ── Common display helpers ─────────────────────────────────────────────────
@@ -252,6 +253,16 @@ void setup()
         gfx.setRotation(flip ? 1 : 3);
         lv_display_set_rotation(s_lv_display,
             flip ? LV_DISPLAY_ROTATION_270 : LV_DISPLAY_ROTATION_90);
+    };
+
+    // ── Deep sleep callback ────────────────────────────────────────────────
+    s_enter_deep_sleep = []() {
+        Log.verboseln("Entering deep sleep");
+        s_audio->tone_off();
+        s_audio->suspend();                          // power down codec + I2S
+        digitalWrite(PIN_VEXT, !VEXT_ON_VALUE);      // cut peripheral power
+        esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BUTTON, 0);  // LOW=pressed
+        esp_deep_sleep_start();                      // does not return
     };
 
     // Splash while peripherals init
