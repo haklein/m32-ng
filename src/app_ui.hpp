@@ -20,6 +20,7 @@
 #include "i_storage.h"
 #include "paddle_ctl.h"
 #include "iambic_keyer.h"
+#include "straight_keyer.h"
 #include "morse_decoder.h"
 #include "morse_trainer.h"
 #include "text_generators.h"
@@ -91,10 +92,12 @@ static void load_settings()
 }
 
 // ── CW engine (keyer + echo modes) ────────────────────────────────────────
-static PaddleCtl*    s_paddle      = nullptr;
-static IambicKeyer*  s_keyer       = nullptr;
-static MorseDecoder* s_decoder     = nullptr;
-static uint32_t      s_straight_t0 = 0;
+static PaddleCtl*      s_paddle          = nullptr;
+static IambicKeyer*    s_keyer           = nullptr;
+static MorseDecoder*   s_decoder         = nullptr;
+static StraightKeyer*  s_straight_keyer  = nullptr;
+static read_key_fun_ptr s_read_straight_key = nullptr;   // set by platform TU
+static bool            s_straight_key_state = false;      // event→polling bridge
 
 // ── Trainer (generator + echo modes) ──────────────────────────────────────
 static MorseTrainer*   s_trainer    = nullptr;
@@ -182,35 +185,42 @@ static void enter_encoder_mode(EncoderMode mode)
 // ── Screen flip callback (set by platform TU; nullptr on simulator) ───────
 static void (*s_on_screen_flip)(bool flip) = nullptr;
 
-// ── Straight key helpers (shared by STRAIGHT and PADDLE-in-straight-mode) ─
-static void handle_straight_down()
+static bool cw_mode_active();  // defined below
+
+// ── StraightKeyer state callback ──────────────────────────────────────────
+// StraightKeyer polls the key, applies noise-blanker debouncing, and fires
+// STRAIGHT_ON/OFF for sidetone plus DOT_ON/DASH_ON (adaptive classification)
+// fed into MorseDecoder.  STOPPED fires at the inter-character gap.
+static void on_straight_state(PlayState ps)
 {
-    if (s_active_mode == ActiveMode::KEYER ||
-        s_active_mode == ActiveMode::ECHO ||
-        s_active_mode == ActiveMode::CHATBOT) {
-        s_straight_t0 = (uint32_t)app_millis();
+    if (!cw_mode_active()) return;
+    switch (ps) {
+    case PLAY_STATE_STRAIGHT_ON:
         s_audio->tone_on(s_settings.freq_hz);
         s_decoder->set_transmitting(true);
         s_keyer_last_element_end_t = (unsigned long)app_millis();
         if (s_active_mode == ActiveMode::ECHO)
             s_trainer->tame_echo_timeout();
-    }
-}
-
-static void handle_straight_up()
-{
-    if (s_active_mode == ActiveMode::KEYER ||
-        s_active_mode == ActiveMode::ECHO ||
-        s_active_mode == ActiveMode::CHATBOT) {
-        uint32_t dur = (uint32_t)app_millis() - s_straight_t0;
-        unsigned long dit = 1200u / (unsigned long)s_settings.wpm;
+        break;
+    case PLAY_STATE_DOT_ON:
+    case PLAY_STATE_DASH_ON:
+        if (ps == PLAY_STATE_DOT_ON) s_decoder->append_dot();
+        else                         s_decoder->append_dash();
+        // Adapt decoder threshold to operator's actual sending speed.
+        // StraightKeyer tracks dit_avg adaptively; use 2× as the decode
+        // timeout (between 1×dit inter-element and 3×dit inter-character).
+        if (s_straight_keyer)
+            s_decoder->set_decode_threshold(s_straight_keyer->get_dit_avg() * 2);
+        break;
+    case PLAY_STATE_STRAIGHT_OFF:
         s_audio->tone_off();
         s_decoder->set_transmitting(false);
-        if (dur < dit * 2) s_decoder->append_dot();
-        else               s_decoder->append_dash();
-        if (s_active_mode == ActiveMode::KEYER ||
-            s_active_mode == ActiveMode::CHATBOT)
-            s_keyer_last_element_end_t = (unsigned long)app_millis();
+        s_keyer_last_element_end_t = (unsigned long)app_millis();
+        break;
+    case PLAY_STATE_STOPPED:
+        break;
+    default:
+        break;
     }
 }
 
@@ -1171,9 +1181,11 @@ static void route(KeyEvent ev)
                 }
                 if (s_active_mode == ActiveMode::ECHO)
                     s_trainer->tame_echo_timeout();
-            } else if (phys_dit) {
-                // Straight mode: tip contact (DIT pin) is the key
-                handle_straight_down();
+            } else {
+                // Straight mode: bridge to StraightKeyer via polling state.
+                // On pocketwroom StraightKeyer reads GPIO directly; this
+                // only matters for simulator/MIDI event sources.
+                s_straight_key_state = true;
             }
             break;
         }
@@ -1186,18 +1198,18 @@ static void route(KeyEvent ev)
                     if (is_dit) s_paddle->setDotPushed(false);
                     else        s_paddle->setDashPushed(false);
                 }
-            } else if (phys_dit) {
-                handle_straight_up();
+            } else {
+                s_straight_key_state = false;
             }
             break;
         }
 
-        // ── Straight key (always straight, independent of settings) ──────
+        // ── Straight key — StraightKeyer polls; events bridge for sim ────
         case KeyEvent::STRAIGHT_DOWN:
-            handle_straight_down();
+            s_straight_key_state = true;
             break;
         case KeyEvent::STRAIGHT_UP:
-            handle_straight_up();
+            s_straight_key_state = false;
             break;
 
         default:
@@ -1215,6 +1227,9 @@ static void app_ui_init(uint32_t rng_seed)
     s_decoder = new MorseDecoder(dit_ms * 2, on_letter_decoded, app_millis);
     s_keyer   = new IambicKeyer(dit_ms, on_play_state, app_millis, s_settings.mode_a);
     s_paddle  = new PaddleCtl(/*debounce_ms=*/2, on_lever_state, app_millis);
+    if (s_read_straight_key)
+        s_straight_keyer = new StraightKeyer(on_straight_state,
+                                             s_read_straight_key, app_millis);
 
     s_trainer = new MorseTrainer(
         [](bool on) {
@@ -1319,6 +1334,7 @@ static void app_ui_tick()
         s_active_mode == ActiveMode::CHATBOT) {
         s_paddle->tick();
         s_keyer->tick();
+        if (s_straight_keyer) s_straight_keyer->decode();
         s_decoder->tick();
     }
     // Word-space: 7 dit after the last element ended (standard CW word space).

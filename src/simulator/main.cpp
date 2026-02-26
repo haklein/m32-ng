@@ -69,6 +69,9 @@ int main(void)
                                     MIDI_NOTE_STRAIGHT, /*auto_connect=*/true);
     SDL_AddEventWatch(quit_watcher, nullptr);
 
+    // StraightKeyer polls via s_straight_key_state (set from route() events).
+    s_read_straight_key = []() -> bool { return s_straight_key_state; };
+
     app_ui_init(std::random_device{}());
 
     Uint32 last_tick = SDL_GetTicks();
@@ -92,6 +95,7 @@ int main(void)
     delete s_gen;
     delete s_paddle;
     delete s_keyer;
+    delete s_straight_keyer;
     delete s_decoder;
     delete s_audio;
     lv_deinit();

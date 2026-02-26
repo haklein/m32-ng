@@ -283,6 +283,13 @@ void setup()
     Log.verboseln("Key input init");
     s_keys = new PocketKeyInput(touch_threshold);
 
+    // ── Straight key — uses ISR event bridge (s_straight_key_state) ────────
+    // PIN_KEYER may float LOW when no key is connected; polling GPIO directly
+    // would cause a phantom key-down.  ISR fires only on actual edges, and
+    // route() sets s_straight_key_state from STRAIGHT_DOWN/UP events.
+    // StraightKeyer's noise blanker debounces on top.
+    s_read_straight_key = []() -> bool { return s_straight_key_state; };
+
     // ── CW engine + UI ────────────────────────────────────────────────────
     app_ui_init(esp_random());
 

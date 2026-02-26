@@ -26,6 +26,9 @@ public:
     // Drive the decoder state machine; call every loop iteration.
     void decode();
 
+    // Current adaptive dit length estimate (ms) — for external decode threshold.
+    unsigned long get_dit_avg() const { return dit_avg; }
+
 private:
     play_state_changed_fun_ptr state_changed_cb;
     read_key_fun_ptr read_key_cb;
