@@ -18,6 +18,27 @@ void MorseTrainer::set_speed_wpm(int wpm)
     wpm_ = wpm;
     dot_delay_ms_  = 1200 / wpm;
     dash_delay_ms_ = (dot_delay_ms_ * 3 * 55) / 50;
+    // Recalculate Farnsworth gap if active
+    set_farnsworth_wpm(farnsworth_wpm_);
+}
+
+void MorseTrainer::set_farnsworth_wpm(int eff_wpm)
+{
+    farnsworth_wpm_ = eff_wpm;
+    if (eff_wpm > 0 && eff_wpm < wpm_) {
+        // Farnsworth formula: "PARIS" = 31 element units + 19 gap units = 50 total.
+        // gap_unit = (60000/eff - 31*1200/char) / 19
+        int gap_unit_ms = (60000 / eff_wpm - 31 * 1200 / wpm_) / 19;
+        if (gap_unit_ms < dot_delay_ms_) gap_unit_ms = dot_delay_ms_;
+        // InterCharacter adds to the InterSymbol gap (1 dot) to form the full
+        // inter-character pause.  Target = 3 × gap_unit, minus the 1-dot
+        // InterSymbol that precedes it.
+        char_gap_ms_ = 3 * gap_unit_ms - dot_delay_ms_;
+        if (char_gap_ms_ < dot_delay_ms_) char_gap_ms_ = dot_delay_ms_;
+    } else {
+        // Normal timing: InterCharacter = 2 dots (+ 1 dot InterSymbol = 3 total)
+        char_gap_ms_ = dot_delay_ms_ * 2;
+    }
 }
 
 void MorseTrainer::set_echo_result_fn(echo_result_fn cb) { result_cb_ = std::move(cb); }
@@ -176,7 +197,7 @@ void MorseTrainer::tick()
 
     case PlayerState::InterCharacter:
         if (player_position_ < phrase_morse_.size() + 1) {
-            if (now > last_player_state_change_ + static_cast<uint32_t>(dot_delay_ms_ * 2)) {
+            if (now > last_player_state_change_ + static_cast<uint32_t>(char_gap_ms_)) {
                 current_player_state_   = PlayerState::InterSymbol;
                 last_player_state_change_ = now;
             }

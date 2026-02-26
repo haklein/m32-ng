@@ -13,10 +13,29 @@ static constexpr const char CW_CHARS[] =
     "abcdefghijklmnopqrstuvwxyz0123456789.,:-/=?@+SANKEBäöüH";
 //   0....5....1....5....2....5....3....5....4....5....5....5
 
-// Koch order (LCWO): characters introduced in sequence.
-// Lesson N uses the first N characters of this string (N = 1..41).
-static constexpr const char KOCH_ORDER[] =
-    "kmuresnaptlwi.jz=foy,vg5/q92h38b?47c1d6x0";
+// Koch character orderings from different training programs.
+// Lesson N uses the first N characters of the selected string.
+enum KochOrder : uint8_t {
+    KOCH_LCWO      = 0,  // Learn CW Online
+    KOCH_MORSERINO = 1,  // Morserino-32
+    KOCH_CWAC      = 2,  // CW Academy (CWops)
+    KOCH_LICW      = 3,  // Long Island CW Club carousel
+    KOCH_ORDER_COUNT
+};
+
+static constexpr const char* KOCH_ORDERS[] = {
+    "kmuresnaptlwi.jz=foy,vg5/q92h38b?47c1d60x",     // LCWO
+    "mkrsuaptlowi.njef0yv,g5/q9zh38b?427c1d6x-=",     // Morserino
+    "teanois14rhdl25ucmw36?fy,pgq79/bv+kj80=xz.-",    // CW Academy
+    "reatinpgslcdhofuwbkmy59,qxv73?+=16.zj/28040-",    // LICW
+};
+
+static constexpr const char* KOCH_ORDER_NAMES[] = {
+    "LCWO", "Morserino", "CW Academy", "LICW"
+};
+
+// Convenience alias — length of the longest Koch order (all are the same length).
+static constexpr int KOCH_MAX_LESSON = 44;
 
 enum RandomOption
 {

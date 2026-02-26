@@ -54,6 +54,9 @@ public:
     void set_playing();
     void set_state(TrainerState state);
     void set_speed_wpm(int wpm);
+    // Farnsworth: effective WPM for inter-character/word spacing.
+    // 0 = off (gaps at character speed).  Must be <= character WPM.
+    void set_farnsworth_wpm(int eff_wpm);
     void set_adaptive_speed(bool adaptive);
     void set_echo_result_fn(echo_result_fn cb);
     void set_echo_reveal_fn(echo_reveal_fn cb);
@@ -79,6 +82,8 @@ private:
 
     int dot_delay_ms_  = 1200 / 18;
     int dash_delay_ms_ = (dot_delay_ms_ * 3 * 55) / 50;
+    int char_gap_ms_   = dot_delay_ms_ * 2;  // InterCharacter delay (stretched for Farnsworth)
+    int farnsworth_wpm_ = 0;                  // 0 = off
 
     static constexpr int SUCCESS_DELAY_MS            = 1000;
     static constexpr int ERROR_DELAY_MS              = 1000;

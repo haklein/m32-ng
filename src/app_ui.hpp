@@ -33,9 +33,10 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 2;
+    static constexpr uint8_t VERSION = 4;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 15;
+    uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
     bool     mode_a       = false;   // false = Iambic B
     uint16_t freq_hz      = 700;
     uint8_t  volume       = 7;
@@ -46,6 +47,7 @@ struct AppSettings {
     bool     cont_chars   = false;   // Random character groups
     uint8_t  chars_group       = 0;   // 0=Alpha, 1=Alpha+Num, 2=All CW
     uint8_t  koch_lesson       = 0;   // 0=off, 1..N=first N Koch chars
+    uint8_t  koch_order        = 0;   // KochOrder enum (0=LCWO, 1=Morserino, 2=CWAc, 3=LICW)
     uint8_t  echo_max_repeats  = 3;   // 0=unlimited, else max failures before reveal
     uint8_t  chatbot_qso_depth = 1;  // 0=MINIMAL, 1=STANDARD, 2=RAGCHEW
     uint8_t  text_font_size    = 0;  // 0=Normal (20px), 1=Large (28px)
@@ -307,6 +309,7 @@ static void apply_settings()
     s_keyer->setModeA(s_settings.mode_a);
     s_decoder->set_decode_threshold(dit_ms * 2);
     s_trainer->set_speed_wpm(s_settings.wpm);
+    s_trainer->set_farnsworth_wpm(s_settings.farnsworth);
     s_trainer->set_max_echo_repeats(s_settings.echo_max_repeats);
     if (s_chatbot) {
         s_chatbot->set_speed_wpm(s_settings.wpm);
@@ -324,9 +327,11 @@ static std::string content_phrase()
 {
     // Koch mode: character groups using the first N Koch chars
     if (s_settings.koch_lesson > 0) {
-        int n = std::min((int)s_settings.koch_lesson,
-                         (int)(sizeof(KOCH_ORDER) - 1));
-        return s_gen->random_chars_from_set(std::string(KOCH_ORDER, n), 5);
+        int idx = std::min((int)s_settings.koch_order,
+                           (int)(KOCH_ORDER_COUNT - 1));
+        const char* order = KOCH_ORDERS[idx];
+        int n = std::min((int)s_settings.koch_lesson, KOCH_MAX_LESSON);
+        return s_gen->random_chars_from_set(std::string(order, n), 5);
     }
     // Collect enabled content types
     int types[4]; int nt = 0;
@@ -721,6 +726,22 @@ static lv_obj_t* build_settings_screen()
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
+    // Farnsworth (effective WPM, 0 = off)
+    {
+        lv_obj_t* row = make_row("Farnsworth (0=off)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 0, 40);
+        lv_spinbox_set_digit_count(spn, 2);
+        lv_spinbox_set_value(spn, s_settings.farnsworth);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.farnsworth = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            apply_settings();
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
     // Keyer mode
     {
         lv_obj_t* row = make_row("Keyer Mode");
@@ -971,7 +992,7 @@ static lv_obj_t* build_content_screen()
     lv_obj_set_pos(kl_lbl, COL2_X, R2_Y + LBL_OFF);
 
     lv_obj_t* koch_spn = lv_spinbox_create(scr);
-    lv_spinbox_set_range(koch_spn, 0, (int32_t)(sizeof(KOCH_ORDER) - 1));
+    lv_spinbox_set_range(koch_spn, 0, KOCH_MAX_LESSON);
     lv_spinbox_set_digit_count(koch_spn, 2);
     lv_spinbox_set_value(koch_spn, s_settings.koch_lesson);
     lv_obj_set_width(koch_spn, compact ? 80 : 100);
@@ -979,6 +1000,26 @@ static lv_obj_t* build_content_screen()
     lv_group_add_obj(s_content_group, koch_spn);
     lv_obj_add_event_cb(koch_spn, [](lv_event_t* e) {
         s_settings.koch_lesson = (uint8_t)lv_spinbox_get_value(
+            lv_event_get_target_obj(e));
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // Row 3: Koch order dropdown (full width)
+    const lv_coord_t R3_Y = START_Y + 3 * ROW_H;
+
+    lv_obj_t* ko_lbl = lv_label_create(scr);
+    lv_label_set_text(ko_lbl, "Koch Order:");
+    lv_obj_set_pos(ko_lbl, LBL_X, R3_Y + LBL_OFF);
+
+    lv_obj_t* ko_dd = lv_dropdown_create(scr);
+    lv_dropdown_set_options(ko_dd, "LCWO\nMorserino\nCW Academy\nLICW");
+    lv_dropdown_set_selected(ko_dd, std::min((uint8_t)(KOCH_ORDER_COUNT - 1),
+                                             s_settings.koch_order));
+    lv_obj_set_width(ko_dd, compact ? 130 : 160);
+    lv_obj_set_pos(ko_dd, LBL_X + (compact ? 80 : 100), R3_Y + CTL_OFF);
+    lv_group_add_obj(s_content_group, ko_dd);
+    lv_obj_add_event_cb(ko_dd, [](lv_event_t* e) {
+        s_settings.koch_order = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
