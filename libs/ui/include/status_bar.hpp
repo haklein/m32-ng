@@ -20,6 +20,7 @@ public:
     void set_mode(const char* name);
     void set_wpm(int wpm);
     void set_volume(int vol);
+    void set_scroll();
 
     lv_obj_t* obj() const { return bar_; }
 

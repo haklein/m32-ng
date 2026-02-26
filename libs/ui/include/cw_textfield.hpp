@@ -43,6 +43,10 @@ public:
     // Return the outer scrollable container for size / position adjustments.
     lv_obj_t* obj() const { return container_; }
 
+    // Enable/disable auto-scroll on new content.  When disabled, the view
+    // stays put so the user can scroll freely.  Re-enabling snaps to bottom.
+    void set_auto_scroll(bool enable);
+
 private:
     void scroll_to_bottom();
 
@@ -50,4 +54,5 @@ private:
     lv_obj_t*   spangroup_;
     lv_span_t*  current_span_;
     std::string current_word_;
+    bool        auto_scroll_ = true;
 };

@@ -41,3 +41,8 @@ void StatusBar::set_volume(int vol)
     snprintf(buf, sizeof(buf), "Vol %d", vol);
     lv_label_set_text(wpm_label_, buf);
 }
+
+void StatusBar::set_scroll()
+{
+    lv_label_set_text(wpm_label_, LV_SYMBOL_UP LV_SYMBOL_DOWN " Scroll");
+}

@@ -130,14 +130,46 @@ static lv_group_t* s_menu_group     = nullptr;
 static lv_group_t* s_settings_group = nullptr;
 static lv_group_t* s_content_group  = nullptr;
 
-// ── Encoder adjust mode (FN toggle: WPM vs Volume) ──────────────────────
-static bool s_encoder_vol_mode = false;
+// ── Encoder adjust mode (FN button cycles: WPM / Volume / Scroll) ───────
+enum class EncoderMode { WPM, VOLUME, SCROLL };
+static EncoderMode   s_encoder_mode          = EncoderMode::WPM;
+static unsigned long s_fn_last_press_t       = 0;
+static bool          s_fn_pending            = false;
+static constexpr unsigned long FN_DOUBLE_MS  = 400;
 
 static void update_status_bar_info()
 {
     if (!s_active_sb) return;
-    if (s_encoder_vol_mode) s_active_sb->set_volume(s_settings.volume);
-    else                    s_active_sb->set_wpm(s_settings.wpm);
+    switch (s_encoder_mode) {
+        case EncoderMode::WPM:    s_active_sb->set_wpm(s_settings.wpm); break;
+        case EncoderMode::VOLUME: s_active_sb->set_volume(s_settings.volume); break;
+        case EncoderMode::SCROLL: s_active_sb->set_scroll(); break;
+    }
+}
+
+// Enable/disable auto-scroll on all active CW text fields.
+static void set_active_auto_scroll(bool enable)
+{
+    if (s_keyer_tf)       s_keyer_tf->set_auto_scroll(enable);
+    if (s_gen_tf)         s_gen_tf->set_auto_scroll(enable);
+    if (s_chatbot_bot_tf) s_chatbot_bot_tf->set_auto_scroll(enable);
+    if (s_chatbot_oper_tf) s_chatbot_oper_tf->set_auto_scroll(enable);
+}
+
+// Return the scrollable container of the primary active text field.
+static lv_obj_t* active_scroll_target()
+{
+    if (s_keyer_tf)       return s_keyer_tf->obj();
+    if (s_gen_tf)         return s_gen_tf->obj();
+    if (s_chatbot_bot_tf) return s_chatbot_bot_tf->obj();
+    return nullptr;
+}
+
+static void enter_encoder_mode(EncoderMode mode)
+{
+    s_encoder_mode = mode;
+    set_active_auto_scroll(mode != EncoderMode::SCROLL);
+    update_status_bar_info();
 }
 
 // ── Forward declarations ───────────────────────────────────────────────────
@@ -309,7 +341,7 @@ static lv_obj_t* build_main_menu()
             };
             leave_cb = []() {
                 s_active_mode              = ActiveMode::NONE;
-                s_encoder_vol_mode         = false;
+                s_encoder_mode             = EncoderMode::WPM;
                 s_keyer_word_pending       = false;
                 s_keyer_last_element_end_t = 0;
                 delete s_keyer_tf; s_keyer_tf = nullptr;
@@ -326,7 +358,7 @@ static lv_obj_t* build_main_menu()
             };
             leave_cb = []() {
                 s_active_mode      = ActiveMode::NONE;
-                s_encoder_vol_mode = false;
+                s_encoder_mode     = EncoderMode::WPM;
                 s_trainer->set_idle();
                 s_audio->tone_off();
                 s_pending_gen_phrase.clear();
@@ -343,7 +375,7 @@ static lv_obj_t* build_main_menu()
             };
             leave_cb = []() {
                 s_active_mode      = ActiveMode::NONE;
-                s_encoder_vol_mode = false;
+                s_encoder_mode     = EncoderMode::WPM;
                 s_trainer->set_idle();
                 s_trainer->set_state(MorseTrainer::TrainerState::Player);
                 s_audio->tone_off();
@@ -388,7 +420,7 @@ static lv_obj_t* build_main_menu()
             };
             leave_cb = []() {
                 s_active_mode      = ActiveMode::NONE;
-                s_encoder_vol_mode = false;
+                s_encoder_mode     = EncoderMode::WPM;
                 s_trainer->set_idle();
                 s_audio->tone_off();
                 delete s_chatbot; s_chatbot = nullptr;
@@ -859,30 +891,48 @@ static void route(KeyEvent ev)
         case KeyEvent::ENCODER_CW:
             s_enc_diff++;
             if (s_active_mode != ActiveMode::NONE) {
-                if (s_encoder_vol_mode) {
-                    s_settings.volume = std::min((int)s_settings.volume + 1, 10);
-                    s_audio->set_volume(s_settings.volume);
-                } else {
-                    s_settings.wpm = std::min(s_settings.wpm + 1, 40);
-                    apply_settings();
+                switch (s_encoder_mode) {
+                    case EncoderMode::VOLUME:
+                        s_settings.volume = std::min((int)s_settings.volume + 1, 10);
+                        s_audio->set_volume(s_settings.volume);
+                        update_status_bar_info();
+                        save_settings();
+                        break;
+                    case EncoderMode::SCROLL: {
+                        lv_obj_t* t = active_scroll_target();
+                        if (t) lv_obj_scroll_by(t, 0, -20, LV_ANIM_OFF);
+                        break;
+                    }
+                    default:
+                        s_settings.wpm = std::min(s_settings.wpm + 1, 40);
+                        apply_settings();
+                        save_settings();
+                        break;
                 }
-                update_status_bar_info();
-                save_settings();
             }
             break;
         case KeyEvent::ENCODER_CCW:
             s_enc_diff--;
             if (s_active_mode != ActiveMode::NONE) {
-                if (s_encoder_vol_mode) {
-                    s_settings.volume = (s_settings.volume > 0)
-                        ? s_settings.volume - 1 : 0;
-                    s_audio->set_volume(s_settings.volume);
-                } else {
-                    s_settings.wpm = std::max(s_settings.wpm - 1, 5);
-                    apply_settings();
+                switch (s_encoder_mode) {
+                    case EncoderMode::VOLUME:
+                        s_settings.volume = (s_settings.volume > 0)
+                            ? s_settings.volume - 1 : 0;
+                        s_audio->set_volume(s_settings.volume);
+                        update_status_bar_info();
+                        save_settings();
+                        break;
+                    case EncoderMode::SCROLL: {
+                        lv_obj_t* t = active_scroll_target();
+                        if (t) lv_obj_scroll_by(t, 0, 20, LV_ANIM_OFF);
+                        break;
+                    }
+                    default:
+                        s_settings.wpm = std::max(s_settings.wpm - 1, 5);
+                        apply_settings();
+                        save_settings();
+                        break;
                 }
-                update_status_bar_info();
-                save_settings();
             }
             break;
 
@@ -913,8 +963,17 @@ static void route(KeyEvent ev)
 
         case KeyEvent::BUTTON_AUX_SHORT:
             if (s_active_mode != ActiveMode::NONE) {
-                s_encoder_vol_mode = !s_encoder_vol_mode;
-                update_status_bar_info();
+                unsigned long now = (unsigned long)app_millis();
+                if (s_fn_pending && (now - s_fn_last_press_t) < FN_DOUBLE_MS) {
+                    // Double press: toggle scroll mode
+                    s_fn_pending = false;
+                    enter_encoder_mode(s_encoder_mode == EncoderMode::SCROLL
+                        ? EncoderMode::WPM : EncoderMode::SCROLL);
+                } else {
+                    // First press — wait for possible second press
+                    s_fn_pending = true;
+                    s_fn_last_press_t = now;
+                }
             }
             break;
         case KeyEvent::BUTTON_AUX_LONG:
@@ -1080,6 +1139,18 @@ static void app_ui_init(uint32_t rng_seed)
 static void app_ui_tick()
 {
     s_audio->poll();
+
+    // FN double-press timeout: if no second press arrived, execute single-press
+    if (s_fn_pending &&
+        ((unsigned long)app_millis() - s_fn_last_press_t) >= FN_DOUBLE_MS) {
+        s_fn_pending = false;
+        if (s_encoder_mode != EncoderMode::SCROLL) {
+            // Single press: toggle WPM ↔ Volume
+            enter_encoder_mode(s_encoder_mode == EncoderMode::WPM
+                ? EncoderMode::VOLUME : EncoderMode::WPM);
+        }
+        // Single press while in scroll mode is ignored
+    }
 
     if (s_active_mode == ActiveMode::KEYER ||
         s_active_mode == ActiveMode::ECHO ||

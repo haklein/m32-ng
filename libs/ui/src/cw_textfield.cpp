@@ -22,12 +22,19 @@ CWTextField::CWTextField(lv_obj_t* parent, const lv_font_t* font)
 
 void CWTextField::scroll_to_bottom()
 {
+    if (!auto_scroll_) return;
     // Force layout recalculation so the container knows the spangroup's
     // new content height before we query the scroll distance.
     lv_obj_update_layout(container_);
     lv_coord_t remain = lv_obj_get_scroll_bottom(container_);
     if (remain > 0)
         lv_obj_scroll_by(container_, 0, -remain, LV_ANIM_OFF);
+}
+
+void CWTextField::set_auto_scroll(bool enable)
+{
+    auto_scroll_ = enable;
+    if (enable) scroll_to_bottom();
 }
 
 void CWTextField::add_char(char c)
