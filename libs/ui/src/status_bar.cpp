@@ -34,3 +34,10 @@ void StatusBar::set_wpm(int wpm)
     snprintf(buf, sizeof(buf), "%d WPM", wpm);
     lv_label_set_text(wpm_label_, buf);
 }
+
+void StatusBar::set_volume(int vol)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "Vol %d", vol);
+    lv_label_set_text(wpm_label_, buf);
+}

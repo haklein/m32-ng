@@ -130,6 +130,16 @@ static lv_group_t* s_menu_group     = nullptr;
 static lv_group_t* s_settings_group = nullptr;
 static lv_group_t* s_content_group  = nullptr;
 
+// ── Encoder adjust mode (FN toggle: WPM vs Volume) ──────────────────────
+static bool s_encoder_vol_mode = false;
+
+static void update_status_bar_info()
+{
+    if (!s_active_sb) return;
+    if (s_encoder_vol_mode) s_active_sb->set_volume(s_settings.volume);
+    else                    s_active_sb->set_wpm(s_settings.wpm);
+}
+
 // ── Forward declarations ───────────────────────────────────────────────────
 static lv_obj_t* build_main_menu();
 static lv_obj_t* build_keyer_screen();
@@ -225,7 +235,7 @@ static void apply_settings()
         s_chatbot->set_qso_depth(depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
     }
     s_audio->set_volume(s_settings.volume);
-    if (s_active_sb) s_active_sb->set_wpm(s_settings.wpm);
+    update_status_bar_info();
 }
 
 // ── Content phrase generator ───────────────────────────────────────────────
@@ -299,6 +309,7 @@ static lv_obj_t* build_main_menu()
             };
             leave_cb = []() {
                 s_active_mode              = ActiveMode::NONE;
+                s_encoder_vol_mode         = false;
                 s_keyer_word_pending       = false;
                 s_keyer_last_element_end_t = 0;
                 delete s_keyer_tf; s_keyer_tf = nullptr;
@@ -314,7 +325,8 @@ static lv_obj_t* build_main_menu()
                 lv_indev_set_group(s_enc_indev, nullptr);
             };
             leave_cb = []() {
-                s_active_mode = ActiveMode::NONE;
+                s_active_mode      = ActiveMode::NONE;
+                s_encoder_vol_mode = false;
                 s_trainer->set_idle();
                 s_audio->tone_off();
                 s_pending_gen_phrase.clear();
@@ -330,7 +342,8 @@ static lv_obj_t* build_main_menu()
                 lv_indev_set_group(s_enc_indev, nullptr);
             };
             leave_cb = []() {
-                s_active_mode = ActiveMode::NONE;
+                s_active_mode      = ActiveMode::NONE;
+                s_encoder_vol_mode = false;
                 s_trainer->set_idle();
                 s_trainer->set_state(MorseTrainer::TrainerState::Player);
                 s_audio->tone_off();
@@ -374,7 +387,8 @@ static lv_obj_t* build_main_menu()
                 lv_indev_set_group(s_enc_indev, nullptr);
             };
             leave_cb = []() {
-                s_active_mode = ActiveMode::NONE;
+                s_active_mode      = ActiveMode::NONE;
+                s_encoder_vol_mode = false;
                 s_trainer->set_idle();
                 s_audio->tone_off();
                 delete s_chatbot; s_chatbot = nullptr;
@@ -844,23 +858,30 @@ static void route(KeyEvent ev)
     switch (ev) {
         case KeyEvent::ENCODER_CW:
             s_enc_diff++;
-            if (s_active_mode == ActiveMode::KEYER  ||
-                s_active_mode == ActiveMode::GENERATOR ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT) {
-                s_settings.wpm = std::min(s_settings.wpm + 1, 40);
-                apply_settings();
+            if (s_active_mode != ActiveMode::NONE) {
+                if (s_encoder_vol_mode) {
+                    s_settings.volume = std::min((int)s_settings.volume + 1, 10);
+                    s_audio->set_volume(s_settings.volume);
+                } else {
+                    s_settings.wpm = std::min(s_settings.wpm + 1, 40);
+                    apply_settings();
+                }
+                update_status_bar_info();
                 save_settings();
             }
             break;
         case KeyEvent::ENCODER_CCW:
             s_enc_diff--;
-            if (s_active_mode == ActiveMode::KEYER  ||
-                s_active_mode == ActiveMode::GENERATOR ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT) {
-                s_settings.wpm = std::max(s_settings.wpm - 1, 5);
-                apply_settings();
+            if (s_active_mode != ActiveMode::NONE) {
+                if (s_encoder_vol_mode) {
+                    s_settings.volume = (s_settings.volume > 0)
+                        ? s_settings.volume - 1 : 0;
+                    s_audio->set_volume(s_settings.volume);
+                } else {
+                    s_settings.wpm = std::max(s_settings.wpm - 1, 5);
+                    apply_settings();
+                }
+                update_status_bar_info();
                 save_settings();
             }
             break;
@@ -891,12 +912,9 @@ static void route(KeyEvent ev)
         }
 
         case KeyEvent::BUTTON_AUX_SHORT:
-            if (s_active_mode == ActiveMode::GENERATOR ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT) {
-                s_gen_paused = !s_gen_paused;
-                if (s_gen_paused) s_trainer->set_idle();
-                else              s_trainer->set_playing();
+            if (s_active_mode != ActiveMode::NONE) {
+                s_encoder_vol_mode = !s_encoder_vol_mode;
+                update_status_bar_info();
             }
             break;
         case KeyEvent::BUTTON_AUX_LONG:

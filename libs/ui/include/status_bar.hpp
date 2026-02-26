@@ -19,6 +19,7 @@ public:
 
     void set_mode(const char* name);
     void set_wpm(int wpm);
+    void set_volume(int vol);
 
     lv_obj_t* obj() const { return bar_; }
 
