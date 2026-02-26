@@ -36,6 +36,8 @@ extern "C" uint32_t tick_get_cb(void) {
 static LGFX gfx;
 #endif
 
+static lv_display_t* s_lv_display = nullptr;
+
 static const unsigned int lvBufferSize =
     TFT_WIDTH * TFT_HEIGHT / 10 * (LV_COLOR_DEPTH / 8);
 static uint8_t lvBuffer[lvBufferSize];
@@ -76,11 +78,11 @@ static void display_init()
     lv_init();
     lv_tick_set_cb(tick_get_cb);
 
-    static lv_display_t* lvDisplay = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
-    lv_display_set_rotation(lvDisplay, LV_DISPLAY_ROTATION_90);
-    lv_display_set_color_format(lvDisplay, LV_COLOR_FORMAT_RGB565);
-    lv_display_set_flush_cb(lvDisplay, my_disp_flush);
-    lv_display_set_buffers(lvDisplay, lvBuffer, nullptr, lvBufferSize,
+    s_lv_display = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
+    lv_display_set_rotation(s_lv_display, LV_DISPLAY_ROTATION_90);
+    lv_display_set_color_format(s_lv_display, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_flush_cb(s_lv_display, my_disp_flush);
+    lv_display_set_buffers(s_lv_display, lvBuffer, nullptr, lvBufferSize,
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
 }
 
@@ -237,15 +239,26 @@ void setup()
 
     display_init();
 
+    // ── Settings persistence ─────────────────────────────────────────────
+    s_storage = new PocketStorage();
+    load_settings();
+
+    // ── Screen flip (apply before splash so user sees correct orientation)
+    if (s_settings.screen_flip) {
+        gfx.setRotation(1);
+        lv_display_set_rotation(s_lv_display, LV_DISPLAY_ROTATION_270);
+    }
+    s_on_screen_flip = [](bool flip) {
+        gfx.setRotation(flip ? 1 : 3);
+        lv_display_set_rotation(s_lv_display,
+            flip ? LV_DISPLAY_ROTATION_270 : LV_DISPLAY_ROTATION_90);
+    };
+
     // Splash while peripherals init
     lv_obj_t* splash = lv_label_create(lv_screen_active());
     lv_label_set_text(splash, "M32 NG");
     lv_obj_center(splash);
     lv_timer_handler();
-
-    // ── Settings persistence ─────────────────────────────────────────────
-    s_storage = new PocketStorage();
-    load_settings();
 
     // ── Audio ─────────────────────────────────────────────────────────────
     Log.verboseln("Audio init");

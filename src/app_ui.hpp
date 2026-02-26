@@ -33,7 +33,7 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 1;
+    static constexpr uint8_t VERSION = 2;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 15;
     bool     mode_a       = false;   // false = Iambic B
@@ -49,6 +49,11 @@ struct AppSettings {
     uint8_t  echo_max_repeats  = 3;   // 0=unlimited, else max failures before reveal
     uint8_t  chatbot_qso_depth = 1;  // 0=MINIMAL, 1=STANDARD, 2=RAGCHEW
     uint8_t  text_font_size    = 0;  // 0=Normal (20px), 1=Large (28px)
+    // Key input (VERSION 2)
+    bool     ext_key_iambic = false; // false=Straight, true=Iambic (A/B from mode_a)
+    bool     paddle_swap    = false; // swap dit/dah on touch paddles
+    bool     ext_key_swap   = false; // swap dit/dah on ext key (iambic mode only)
+    bool     screen_flip    = false; // upside-down rotation (lefty mode)
 };
 static AppSettings s_settings;
 
@@ -170,6 +175,49 @@ static void enter_encoder_mode(EncoderMode mode)
     s_encoder_mode = mode;
     set_active_auto_scroll(mode != EncoderMode::SCROLL);
     update_status_bar_info();
+}
+
+// ── Screen flip callback (set by platform TU; nullptr on simulator) ───────
+static void (*s_on_screen_flip)(bool flip) = nullptr;
+
+// ── Straight key helpers (shared by STRAIGHT and PADDLE-in-straight-mode) ─
+static void handle_straight_down()
+{
+    if (s_active_mode == ActiveMode::KEYER ||
+        s_active_mode == ActiveMode::ECHO ||
+        s_active_mode == ActiveMode::CHATBOT) {
+        s_straight_t0 = (uint32_t)app_millis();
+        s_audio->tone_on(s_settings.freq_hz);
+        s_decoder->set_transmitting(true);
+        s_keyer_last_element_end_t = (unsigned long)app_millis();
+        if (s_active_mode == ActiveMode::ECHO)
+            s_trainer->tame_echo_timeout();
+    }
+}
+
+static void handle_straight_up()
+{
+    if (s_active_mode == ActiveMode::KEYER ||
+        s_active_mode == ActiveMode::ECHO ||
+        s_active_mode == ActiveMode::CHATBOT) {
+        uint32_t dur = (uint32_t)app_millis() - s_straight_t0;
+        unsigned long dit = 1200u / (unsigned long)s_settings.wpm;
+        s_audio->tone_off();
+        s_decoder->set_transmitting(false);
+        if (dur < dit * 2) s_decoder->append_dot();
+        else               s_decoder->append_dash();
+        if (s_active_mode == ActiveMode::KEYER ||
+            s_active_mode == ActiveMode::CHATBOT)
+            s_keyer_last_element_end_t = (unsigned long)app_millis();
+    }
+}
+
+// Is any CW mode active?
+static bool cw_mode_active()
+{
+    return s_active_mode == ActiveMode::KEYER ||
+           s_active_mode == ActiveMode::ECHO ||
+           s_active_mode == ActiveMode::CHATBOT;
 }
 
 // ── Forward declarations ───────────────────────────────────────────────────
@@ -768,6 +816,64 @@ static lv_obj_t* build_settings_screen()
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
+    // External key mode
+    {
+        lv_obj_t* row = make_row("Ext Key");
+        lv_obj_t* dd = lv_dropdown_create(row);
+        lv_dropdown_set_options(dd, "Straight\nIambic");
+        lv_dropdown_set_selected(dd, s_settings.ext_key_iambic ? 1u : 0u);
+        lv_obj_set_width(dd, 140);
+        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+            s_settings.ext_key_iambic =
+                (lv_dropdown_get_selected(lv_event_get_target_obj(e)) == 1u);
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // Paddle dit/dah swap
+    {
+        lv_obj_t* row = make_row("Paddle Swap");
+        lv_obj_t* cb = lv_checkbox_create(row);
+        lv_checkbox_set_text(cb, "");
+        if (s_settings.paddle_swap) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_group_add_obj(s_settings_group, cb);
+        lv_obj_add_event_cb(cb, [](lv_event_t* e) {
+            s_settings.paddle_swap =
+                (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // External key dit/dah swap
+    {
+        lv_obj_t* row = make_row("Ext Key Swap");
+        lv_obj_t* cb = lv_checkbox_create(row);
+        lv_checkbox_set_text(cb, "");
+        if (s_settings.ext_key_swap) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_group_add_obj(s_settings_group, cb);
+        lv_obj_add_event_cb(cb, [](lv_event_t* e) {
+            s_settings.ext_key_swap =
+                (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // Screen flip (lefty / custom orientation)
+    {
+        lv_obj_t* row = make_row("Screen Flip");
+        lv_obj_t* cb = lv_checkbox_create(row);
+        lv_checkbox_set_text(cb, "");
+        if (s_settings.screen_flip) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_group_add_obj(s_settings_group, cb);
+        lv_obj_add_event_cb(cb, [](lv_event_t* e) {
+            s_settings.screen_flip =
+                (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
+            save_settings();
+            if (s_on_screen_flip) s_on_screen_flip(s_settings.screen_flip);
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=edit value    E=back");
@@ -983,61 +1089,74 @@ static void route(KeyEvent ev)
             lv_indev_set_group(s_enc_indev, s_menu_group);
             break;
 
-        // Paddle and touch strips both drive the iambic paddle.
-        // In ECHO mode, any DOWN event also tames the receive timeout.
-        case KeyEvent::PADDLE_DIT_DOWN:
+        // ── Touch paddles (always iambic, obey paddle_swap) ─────────────
         case KeyEvent::TOUCH_LEFT_DOWN:
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDotPushed(true);
-            if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
+            if (cw_mode_active()) {
+                if (s_settings.paddle_swap) s_paddle->setDashPushed(true);
+                else                        s_paddle->setDotPushed(true);
+            }
+            if (s_active_mode == ActiveMode::ECHO) s_trainer->tame_echo_timeout();
             break;
-        case KeyEvent::PADDLE_DIT_UP:
         case KeyEvent::TOUCH_LEFT_UP:
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDotPushed(false);
+            if (cw_mode_active()) {
+                if (s_settings.paddle_swap) s_paddle->setDashPushed(false);
+                else                        s_paddle->setDotPushed(false);
+            }
             break;
-        case KeyEvent::PADDLE_DAH_DOWN:
         case KeyEvent::TOUCH_RIGHT_DOWN:
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDashPushed(true);
-            if (s_active_mode == ActiveMode::ECHO)  s_trainer->tame_echo_timeout();
+            if (cw_mode_active()) {
+                if (s_settings.paddle_swap) s_paddle->setDotPushed(true);
+                else                        s_paddle->setDashPushed(true);
+            }
+            if (s_active_mode == ActiveMode::ECHO) s_trainer->tame_echo_timeout();
             break;
-        case KeyEvent::PADDLE_DAH_UP:
         case KeyEvent::TOUCH_RIGHT_UP:
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT)  s_paddle->setDashPushed(false);
+            if (cw_mode_active()) {
+                if (s_settings.paddle_swap) s_paddle->setDotPushed(false);
+                else                        s_paddle->setDashPushed(false);
+            }
             break;
 
-        case KeyEvent::STRAIGHT_DOWN:
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT) {
-                s_straight_t0 = (uint32_t)app_millis();
-                s_audio->tone_on(s_settings.freq_hz);
-                s_decoder->set_transmitting(true);
-                s_keyer_last_element_end_t = (unsigned long)app_millis();
+        // ── External paddle jack (straight or iambic, obey ext_key_swap) ─
+        case KeyEvent::PADDLE_DIT_DOWN:
+        case KeyEvent::PADDLE_DAH_DOWN: {
+            bool phys_dit = (ev == KeyEvent::PADDLE_DIT_DOWN);
+            if (s_settings.ext_key_iambic) {
+                // Iambic: apply swap
+                bool is_dit = s_settings.ext_key_swap ? !phys_dit : phys_dit;
+                if (cw_mode_active()) {
+                    if (is_dit) s_paddle->setDotPushed(true);
+                    else        s_paddle->setDashPushed(true);
+                }
                 if (s_active_mode == ActiveMode::ECHO)
                     s_trainer->tame_echo_timeout();
+            } else if (phys_dit) {
+                // Straight mode: tip contact (DIT pin) is the key
+                handle_straight_down();
             }
             break;
-        case KeyEvent::STRAIGHT_UP:
-            if (s_active_mode == ActiveMode::KEYER ||
-                s_active_mode == ActiveMode::ECHO ||
-                s_active_mode == ActiveMode::CHATBOT) {
-                uint32_t dur = (uint32_t)app_millis() - s_straight_t0;
-                unsigned long dit = 1200u / (unsigned long)s_settings.wpm;
-                s_audio->tone_off();
-                s_decoder->set_transmitting(false);
-                if (dur < dit * 2) s_decoder->append_dot();
-                else               s_decoder->append_dash();
-                if (s_active_mode == ActiveMode::KEYER ||
-                    s_active_mode == ActiveMode::CHATBOT)
-                    s_keyer_last_element_end_t = (unsigned long)app_millis();
+        }
+        case KeyEvent::PADDLE_DIT_UP:
+        case KeyEvent::PADDLE_DAH_UP: {
+            bool phys_dit = (ev == KeyEvent::PADDLE_DIT_UP);
+            if (s_settings.ext_key_iambic) {
+                bool is_dit = s_settings.ext_key_swap ? !phys_dit : phys_dit;
+                if (cw_mode_active()) {
+                    if (is_dit) s_paddle->setDotPushed(false);
+                    else        s_paddle->setDashPushed(false);
+                }
+            } else if (phys_dit) {
+                handle_straight_up();
             }
+            break;
+        }
+
+        // ── Straight key (always straight, independent of settings) ──────
+        case KeyEvent::STRAIGHT_DOWN:
+            handle_straight_down();
+            break;
+        case KeyEvent::STRAIGHT_UP:
+            handle_straight_up();
             break;
 
         default:

@@ -53,10 +53,10 @@ void NativeKeyInputSdl::handle_sdl_event(const SDL_Event* event)
 
     switch (sym) {
         case SDLK_SPACE:
-            push(down ? KeyEvent::PADDLE_DIT_DOWN : KeyEvent::PADDLE_DIT_UP);
+            push(down ? KeyEvent::TOUCH_LEFT_DOWN : KeyEvent::TOUCH_LEFT_UP);
             break;
         case SDLK_RETURN:
-            push(down ? KeyEvent::PADDLE_DAH_DOWN : KeyEvent::PADDLE_DAH_UP);
+            push(down ? KeyEvent::TOUCH_RIGHT_DOWN : KeyEvent::TOUCH_RIGHT_UP);
             break;
         case SDLK_SLASH:
             push(down ? KeyEvent::STRAIGHT_DOWN : KeyEvent::STRAIGHT_UP);
