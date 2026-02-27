@@ -77,6 +77,10 @@ static IAudioOutput* s_audio   = nullptr;
 static IKeyInput*    s_keys    = nullptr;
 static IStorage*     s_storage = nullptr;  // nullptr on simulator (no persistence)
 
+// ── Battery HAL callbacks (set by platform main.cpp) ─────────────────────
+static uint8_t (*s_read_battery_percent)() = nullptr;  // 0–100, or 255 if n/a
+static bool    (*s_is_charging)()          = nullptr;
+
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
 {
@@ -1065,7 +1069,7 @@ static lv_obj_t* build_content_screen()
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
     lv_obj_t* ml_lbl = lv_label_create(scr);
-    lv_label_set_text(ml_lbl, "Length:");
+    lv_label_set_text(ml_lbl, compact ? "Len:" : "Length:");
     lv_obj_set_pos(ml_lbl, COL2_X, R3_Y + LBL_OFF);
 
     lv_obj_t* ml_spn = lv_spinbox_create(scr);
@@ -1365,6 +1369,17 @@ static void app_ui_init(uint32_t rng_seed)
 static void app_ui_tick()
 {
     s_audio->poll();
+
+    // ── Battery polling (~every 10 s) ────────────────────────────────────
+    {
+        static unsigned long s_bat_poll_t = 0;
+        if ((unsigned long)(app_millis() - s_bat_poll_t) >= 10000UL) {
+            s_bat_poll_t = (unsigned long)app_millis();
+            uint8_t pct = s_read_battery_percent ? s_read_battery_percent() : 255;
+            bool chg = s_is_charging ? s_is_charging() : false;
+            if (s_active_sb) s_active_sb->set_battery(pct, chg);
+        }
+    }
 
     // ── Deep sleep on inactivity ─────────────────────────────────────────
     if (s_settings.sleep_timeout_min > 0 &&

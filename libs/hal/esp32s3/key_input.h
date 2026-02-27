@@ -10,10 +10,12 @@
 //
 // Rotary encoder position is read from ESP32Encoder (hardware PCNT).
 // Encoder button (PIN_ROT_BTN) and aux button (PIN_BUTTON) are polled at
-// ~100 Hz with software debounce; short (<500 ms) vs long press is detected
+// ~500 Hz with software debounce; short (<500 ms) vs long press is detected
 // at release time.
 //
-// Touch strips (PIN_TOUCH_LEFT / PIN_TOUCH_RIGHT) are polled via touchRead().
+// Touch strips (PIN_TOUCH_LEFT / PIN_TOUCH_RIGHT) are polled at 500 Hz via
+// touchRead() with per-strip hysteresis thresholds for zero-latency-cost
+// debouncing.  At 35 WPM a dit is 34 ms; 2 ms poll gives ≤ 6 % jitter.
 //
 // All events land in a FreeRTOS queue (depth 32) consumed by poll() / wait().
 
@@ -25,10 +27,9 @@
 class PocketKeyInput : public IKeyInput
 {
 public:
-    // touch_threshold: raw touchRead() value above which a strip counts as pressed.
-    // On ESP32-S3 the touch sensor returns HIGHER values when touched.
-    // Typical idle: 38000–42000; typical touched: 46000–52000; default 44000.
-    explicit PocketKeyInput(uint32_t touch_threshold = 44000);
+    // Per-strip idle values from boot calibration.  Hysteresis thresholds are
+    // computed internally:  ON = idle + HYST_ON, OFF = idle + HYST_OFF.
+    PocketKeyInput(uint32_t touch_l_idle, uint32_t touch_r_idle);
     ~PocketKeyInput() override;
 
     bool poll(KeyEvent& out) override;
@@ -38,10 +39,12 @@ public:
     void IRAM_ATTR push_from_isr(KeyEvent ev);
 
 private:
-    static constexpr int    QUEUE_DEPTH     = 32;
-    static constexpr int    POLL_INTERVAL_MS = 10;  // encoder + button poll rate
-    static constexpr uint32_t LONG_PRESS_MS = 500;
-    static constexpr int    STEPS_PER_DETENT = 2;   // half-quad encoder
+    static constexpr int      QUEUE_DEPTH     = 32;
+    static constexpr int      POLL_INTERVAL_MS = 2;   // 500 Hz — critical for CW timing
+    static constexpr uint32_t LONG_PRESS_MS   = 500;
+    static constexpr int      STEPS_PER_DETENT = 2;   // half-quad encoder
+    static constexpr uint32_t HYST_ON         = 4000;  // press threshold above idle
+    static constexpr uint32_t HYST_OFF        = 2000;  // release threshold above idle
 
     struct ButtonState {
         bool     pressed   = false;
@@ -58,7 +61,10 @@ private:
     QueueHandle_t  event_queue_;
     TaskHandle_t   poll_task_handle_ = nullptr;
     ESP32Encoder   encoder_;
-    uint32_t       touch_threshold_;
+    uint32_t       touch_l_on_;    // per-strip press threshold
+    uint32_t       touch_l_off_;   // per-strip release threshold
+    uint32_t       touch_r_on_;
+    uint32_t       touch_r_off_;
 };
 
 #endif // BOARD_POCKETWROOM

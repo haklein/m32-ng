@@ -31,8 +31,9 @@ static void IRAM_ATTR isr_keyer()
 
 // ── PocketKeyInput ─────────────────────────────────────────────────────────────
 
-PocketKeyInput::PocketKeyInput(uint32_t touch_threshold)
-    : touch_threshold_(touch_threshold)
+PocketKeyInput::PocketKeyInput(uint32_t touch_l_idle, uint32_t touch_r_idle)
+    : touch_l_on_(touch_l_idle + HYST_ON),   touch_l_off_(touch_l_idle + HYST_OFF)
+    , touch_r_on_(touch_r_idle + HYST_ON),   touch_r_off_(touch_r_idle + HYST_OFF)
 {
     s_instance  = this;
     event_queue_ = xQueueCreate(QUEUE_DEPTH, sizeof(KeyEvent));
@@ -160,19 +161,29 @@ void PocketKeyInput::poll_task_body()
                       KeyEvent::BUTTON_AUX_SHORT, KeyEvent::BUTTON_AUX_LONG);
 
         // ── Touch left ────────────────────────────────────────────────────────
-        // ESP32-S3 touch sensor returns HIGHER values when touched (opposite of
-        // original ESP32), so compare > threshold.
-        bool touch_l = touchRead(PIN_TOUCH_LEFT) > touch_threshold_;
-        if (touch_l != touch_left_prev) {
-            push(touch_l ? KeyEvent::TOUCH_LEFT_DOWN : KeyEvent::TOUCH_LEFT_UP);
-            touch_left_prev = touch_l;
+        // Per-strip hysteresis: press requires > ON threshold, release requires
+        // < OFF threshold.  Eliminates edge flickering with zero latency cost.
+        {
+            uint32_t val = touchRead(PIN_TOUCH_LEFT);
+            bool touch_l = touch_left_prev
+                ? (val >= touch_l_off_)   // stay pressed until below OFF
+                : (val > touch_l_on_);    // require above ON to press
+            if (touch_l != touch_left_prev) {
+                push(touch_l ? KeyEvent::TOUCH_LEFT_DOWN : KeyEvent::TOUCH_LEFT_UP);
+                touch_left_prev = touch_l;
+            }
         }
 
         // ── Touch right ───────────────────────────────────────────────────────
-        bool touch_r = touchRead(PIN_TOUCH_RIGHT) > touch_threshold_;
-        if (touch_r != touch_right_prev) {
-            push(touch_r ? KeyEvent::TOUCH_RIGHT_DOWN : KeyEvent::TOUCH_RIGHT_UP);
-            touch_right_prev = touch_r;
+        {
+            uint32_t val = touchRead(PIN_TOUCH_RIGHT);
+            bool touch_r = touch_right_prev
+                ? (val >= touch_r_off_)
+                : (val > touch_r_on_);
+            if (touch_r != touch_right_prev) {
+                push(touch_r ? KeyEvent::TOUCH_RIGHT_DOWN : KeyEvent::TOUCH_RIGHT_UP);
+                touch_right_prev = touch_r;
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));

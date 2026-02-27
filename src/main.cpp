@@ -24,6 +24,7 @@
 #include <audio_output.h>   // PocketAudioOutput
 #include <key_input.h>      // PocketKeyInput, KeyEvent
 #include <storage_nvs.h>    // PocketStorage (NVS)
+#include <battery.h>        // PocketBattery
 #include <esp_sleep.h>      // deep sleep + GPIO wakeup
 #endif
 
@@ -178,12 +179,11 @@ void setup()
     };
     uint32_t touch_l_idle = sample_idle(PIN_TOUCH_LEFT);
     uint32_t touch_r_idle = sample_idle(PIN_TOUCH_RIGHT);
-    uint32_t touch_threshold = std::max(touch_l_idle, touch_r_idle) + 3000;
-    Log.verboseln("Touch calibrated: L_idle=%d R_idle=%d threshold=%d",
-                  touch_l_idle, touch_r_idle, touch_threshold);
+    Log.verboseln("Touch calibrated: L_idle=%d R_idle=%d",
+                  touch_l_idle, touch_r_idle);
 
     Log.verboseln("Key input init");
-    s_keys = new PocketKeyInput(touch_threshold);
+    s_keys = new PocketKeyInput(touch_l_idle, touch_r_idle);
 
     Log.verboseln("Ready — press paddles / encoder / buttons / touch");
 #endif
@@ -286,13 +286,12 @@ void setup()
     };
     uint32_t touch_l_idle = sample_idle(PIN_TOUCH_LEFT);
     uint32_t touch_r_idle = sample_idle(PIN_TOUCH_RIGHT);
-    uint32_t touch_threshold = std::max(touch_l_idle, touch_r_idle) + 3000;
-    Log.verboseln("Touch: L=%d R=%d threshold=%d",
-                  touch_l_idle, touch_r_idle, touch_threshold);
+    Log.verboseln("Touch: L_idle=%d R_idle=%d on=+%d off=+%d",
+                  touch_l_idle, touch_r_idle, 4000, 2000);
 
     // ── Key input ─────────────────────────────────────────────────────────
     Log.verboseln("Key input init");
-    s_keys = new PocketKeyInput(touch_threshold);
+    s_keys = new PocketKeyInput(touch_l_idle, touch_r_idle);
 
     // ── Straight key — uses ISR event bridge (s_straight_key_state) ────────
     // PIN_KEYER may float LOW when no key is connected; polling GPIO directly
@@ -300,6 +299,12 @@ void setup()
     // route() sets s_straight_key_state from STRAIGHT_DOWN/UP events.
     // StraightKeyer's noise blanker debounces on top.
     s_read_straight_key = []() -> bool { return s_straight_key_state; };
+
+    // ── Battery ADC + charger status ─────────────────────────────────────
+    static PocketBattery s_battery;
+    s_battery.begin();
+    s_read_battery_percent = []() -> uint8_t { return s_battery.percent(); };
+    s_is_charging          = []() -> bool    { return s_battery.charging(); };
 
     // ── CW engine + UI ────────────────────────────────────────────────────
     app_ui_init(esp_random());

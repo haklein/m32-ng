@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <lvgl.h>
 
 // Thin 20 px bar pinned to the top of a screen.
@@ -21,6 +22,7 @@ public:
     void set_wpm(int wpm);
     void set_volume(int vol);
     void set_scroll();
+    void set_battery(uint8_t percent, bool charging);
 
     lv_obj_t* obj() const { return bar_; }
 
@@ -28,4 +30,5 @@ private:
     lv_obj_t* bar_;
     lv_obj_t* mode_label_;
     lv_obj_t* wpm_label_;
+    lv_obj_t* bat_label_;
 };
