@@ -340,6 +340,9 @@ static void on_letter_decoded(const std::string& letter)
             }
             if (is_delete) {
                 s_echo_consecutive_e = 0;
+                // Strip trailing spaces (from word-gap detection), then remove last word.
+                while (!s_echo_typed.empty() && s_echo_typed.back() == ' ')
+                    s_echo_typed.pop_back();
                 auto pos = s_echo_typed.rfind(' ');
                 if (pos != std::string::npos)
                     s_echo_typed.erase(pos);

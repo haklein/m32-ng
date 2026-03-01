@@ -110,7 +110,9 @@ void MorseTrainer::symbol_received(const std::string& symbol)
 
     if (is_delete) {
         consecutive_e_ = 0;
-        // Remove last word (back to previous space, or clear all)
+        // Strip trailing spaces (from word-gap detection), then remove last word.
+        while (!received_phrase_.empty() && received_phrase_.back() == ' ')
+            received_phrase_.pop_back();
         auto pos = received_phrase_.rfind(' ');
         if (pos != std::string::npos)
             received_phrase_.erase(pos);
