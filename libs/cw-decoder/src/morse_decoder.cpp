@@ -110,6 +110,16 @@ void MorseDecoder::tick()
         decode();
         last_input_time = 0;
     }
+
+    // Word-gap detection: if a character was decoded and silence continues,
+    // emit a word space.  Fires at ~decode_threshold*3 after the character
+    // decode, which puts total silence at ~8 dit-lengths from the last
+    // element (comfortably above the standard 7-dit word gap).
+    if (space_pending_ && last_input_time == 0 &&
+        (millis_cb() - char_decode_time_) > decode_threshold * 3) {
+        space_pending_ = false;
+        letter_decoded_cb(" ");
+    }
 }
 
 void MorseDecoder::decode()
@@ -119,6 +129,9 @@ void MorseDecoder::decode()
         symbol = " ";
     } else {
         symbol = CW_TREE[treeptr].symb;
+        // Start word-gap timer after decoding a real character.
+        space_pending_ = true;
+        char_decode_time_ = millis_cb();
     }
     treeptr = 0;
     letter_decoded_cb(symbol);
@@ -142,6 +155,7 @@ void MorseDecoder::append_dot()
 
 void MorseDecoder::append(SignalType signal_type)
 {
+    space_pending_ = false;   // new input cancels word-gap detection
     if (signal_type == SIGNAL_DASH) {
         treeptr = CW_TREE[treeptr].dah;
     } else {

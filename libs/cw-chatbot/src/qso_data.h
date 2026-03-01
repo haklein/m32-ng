@@ -82,6 +82,42 @@ static const char* const VK_CITIES[] = {
     "SYDNEY", "MELBOURNE", "PERTH", "BRISBANE", "ADELAIDE", "HOBART",
     "DARWIN", "CANBERRA", "GOLD COAST", "NEWCASTLE"};
 
+// Spain
+static const char* const EA_PREFIXES[] = {"EA", "EB", "EC"};
+static const char* const EA_NAMES[] = {
+    "CARLOS", "JOSE", "MIGUEL", "ANTONIO", "PEDRO", "LUIS", "RAFAEL",
+    "PABLO", "JORGE", "RAMON"};
+static const char* const EA_CITIES[] = {
+    "MADRID", "BARCELONA", "VALENCIA", "SEVILLA", "BILBAO", "MALAGA",
+    "ZARAGOZA", "GRANADA", "ALICANTE", "CORDOBA"};
+
+// Russia
+static const char* const UA_PREFIXES[] = {"UA", "RA", "RV", "RW", "RX", "RZ"};
+static const char* const UA_NAMES[] = {
+    "IGOR", "SERGEI", "YURI", "VLADIMIR", "NIKOLAI", "ANDREI", "ALEXEI",
+    "DMITRI", "OLEG", "BORIS"};
+static const char* const UA_CITIES[] = {
+    "MOSCOW", "ST PETERSBURG", "NOVOSIBIRSK", "SAMARA", "KAZAN",
+    "NIZHNY NOVGOROD", "OMSK", "CHELYABINSK", "ROSTOV", "VOLGOGRAD"};
+
+// Netherlands
+static const char* const PA_PREFIXES[] = {"PA", "PE", "PD"};
+static const char* const PA_NAMES[] = {
+    "JAN", "PIETER", "WILLEM", "HENK", "KEES", "DIRK", "BERT",
+    "HANS", "ROB", "ERIK"};
+static const char* const PA_CITIES[] = {
+    "AMSTERDAM", "ROTTERDAM", "THE HAGUE", "UTRECHT", "EINDHOVEN",
+    "GRONINGEN", "TILBURG", "BREDA", "ARNHEM", "LEIDEN"};
+
+// Brazil
+static const char* const PY_PREFIXES[] = {"PY", "PU", "PP"};
+static const char* const PY_NAMES[] = {
+    "CARLOS", "JOSE", "PAULO", "ROBERTO", "ANTONIO", "MARCOS",
+    "RICARDO", "FERNANDO", "JORGE", "RAFAEL"};
+static const char* const PY_CITIES[] = {
+    "SAO PAULO", "RIO DE JANEIRO", "BRASILIA", "BELO HORIZONTE",
+    "CURITIBA", "PORTO ALEGRE", "RECIFE", "FORTALEZA", "SALVADOR", "MANAUS"};
+
 // ── Country table ───────────────────────────────────────────────────────────
 #define COUNTRY_ENTRY(pfx, nam, cit) \
     { pfx, (int)(sizeof(pfx)/sizeof(pfx[0])), \
@@ -97,6 +133,10 @@ static const CountryData COUNTRIES[] = {
     COUNTRY_ENTRY(I_PREFIXES,   I_NAMES,   I_CITIES),
     COUNTRY_ENTRY(JA_PREFIXES,  JA_NAMES,  JA_CITIES),
     COUNTRY_ENTRY(VK_PREFIXES,  VK_NAMES,  VK_CITIES),
+    COUNTRY_ENTRY(EA_PREFIXES,  EA_NAMES,  EA_CITIES),
+    COUNTRY_ENTRY(UA_PREFIXES,  UA_NAMES,  UA_CITIES),
+    COUNTRY_ENTRY(PA_PREFIXES,  PA_NAMES,  PA_CITIES),
+    COUNTRY_ENTRY(PY_PREFIXES,  PY_NAMES,  PY_CITIES),
 };
 static constexpr int NUM_COUNTRIES = sizeof(COUNTRIES) / sizeof(COUNTRIES[0]);
 

@@ -2,6 +2,7 @@
 #include "../data/english_words.h"
 #include "../data/abbrevs.h"
 #include "../data/qso_phrases.h"
+#include "../data/callsign_prefixes.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -53,66 +54,60 @@ std::string TextGenerators::random_abbrev(int max_length)
 
 std::string TextGenerators::random_callsign(int max_length)
 {
-    // Prefix type: 0=a  1=aa  2=a9  3=9a
-    const uint8_t prefix_type[] = {1, 0, 1, 2, 3, 1};
+    // Compute total prefix weight on first call
+    static int total_weight = 0;
+    if (total_weight == 0) {
+        for (int i = 0; i < NUM_CALL_PREFIXES; ++i)
+            total_weight += CALL_PREFIXES[i].weight;
+    }
+
     std::string call;
     call.reserve(10);
-    int len = 0;
 
-    if (max_length > 4) max_length = 4;
-    if (max_length != 0) max_length += 2;
+    // Pick prefix by cumulative weight
+    int r = rng_range(0, total_weight);
+    int cum = 0;
+    const char* pfx = CALL_PREFIXES[0].prefix;
+    for (int i = 0; i < NUM_CALL_PREFIXES; ++i) {
+        cum += CALL_PREFIXES[i].weight;
+        if (r < cum) { pfx = CALL_PREFIXES[i].prefix; break; }
+    }
+    int pfx_len = (int)std::strlen(pfx);
 
-    int prefix;
-    if (max_length == 3) {
-        prefix = 0;
-    } else {
-        prefix = prefix_type[rng_range(0, 6)];
+    // If max_length is too tight for this prefix, fall back to 1-letter prefix
+    // (minimum call = prefix + digit + 1 suffix = pfx_len + 2)
+    if (max_length > 0 && pfx_len + 2 > max_length) {
+        // Pick a random 1-letter prefix from the common ones
+        static const char* SHORT_PFX[] = {"W", "K", "N", "G", "F", "I", "M"};
+        pfx = SHORT_PFX[rng_range(0, 7)];
+        pfx_len = 1;
     }
 
-    switch (prefix) {
-    case 1:
-        call += CW_CHARS[rng_range(0, 26)];
-        ++len;
-        [[fallthrough]];
-    case 0:
-        call += CW_CHARS[rng_range(0, 26)];
-        ++len;
-        break;
-    case 2:
-        call += CW_CHARS[rng_range(0, 26)];
-        call += CW_CHARS[rng_range(26, 36)];
-        len = 2;
-        break;
-    case 3:
-        call += CW_CHARS[rng_range(26, 36)];
-        call += CW_CHARS[rng_range(0, 26)];
-        len = 2;
-        break;
-    }
+    call += pfx;
 
-    // Digit
-    call += CW_CHARS[rng_range(26, 36)];
-    ++len;
+    // Digit 0–9
+    call += static_cast<char>('0' + rng_range(0, 10));
 
-    // Suffix: 1–3 letters
+    // Suffix: 1–3 letters, biased toward 2–3
+    int budget = (max_length > 0) ? max_length - pfx_len - 1 : 3;
+    budget = std::min(budget, 3);
     int suffix_len;
-    if (max_length == 3) {
+    if (budget <= 1) {
         suffix_len = 1;
-    } else if (max_length == 0) {
-        suffix_len = rng_range(1, 4);
-        if (suffix_len == 2) suffix_len = rng_range(1, 4); // bias toward 2
     } else {
-        suffix_len = std::min(max_length - len, 3);
+        // ~15% 1-letter, ~45% 2-letter, ~40% 3-letter (if budget allows)
+        int roll = rng_range(0, 20);
+        if (roll < 3)       suffix_len = 1;
+        else if (roll < 12) suffix_len = 2;
+        else                suffix_len = 3;
+        suffix_len = std::min(suffix_len, budget);
     }
-    while (suffix_len-- > 0) {
-        call += CW_CHARS[rng_range(0, 26)];
-        ++len;
-    }
+    for (int i = 0; i < suffix_len; ++i)
+        call += static_cast<char>('A' + rng_range(0, 26));
 
-    // Occasional portable suffix (/p or /m), only when no length constraint
-    if (max_length == 0 && rng_range(0, 9) == 0) {
-        call += '/';
-        call += (rng_range(0, 2) == 0) ? 'm' : 'p';
+    // Optional modifier (~8 %): /P, /M, /MM, /QRP — only when unconstrained
+    if (max_length <= 0 && rng_range(0, 25) < 2) {
+        call += CALL_MODIFIERS[rng_range(0, NUM_CALL_MODIFIERS)];
     }
 
     return call;

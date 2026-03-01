@@ -55,4 +55,9 @@ private:
     unsigned long decode_threshold;
     letter_decoded_fn letter_decoded_cb;
     uint8_t treeptr = 0;
+
+    // Word-gap detection: after decoding a character, if silence continues
+    // for another decode_threshold * 2 ms, emit a word space (" ").
+    bool space_pending_ = false;
+    unsigned long char_decode_time_ = 0;
 };

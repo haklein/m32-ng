@@ -131,10 +131,12 @@ void CWChatbot::generate_persona() {
     int ci = rng_range(0, NUM_COUNTRIES);
     const CountryData& c = COUNTRIES[ci];
 
-    // Callsign: prefix + digit + 1-3 letter suffix
+    // Callsign: prefix + digit + 1-3 letter suffix (biased toward 2-3)
     std::string call = rng_pick(c.prefixes, c.num_prefixes);
     call += std::to_string(rng_range(0, 10));
-    int slen = rng_range(1, 4);
+    // ~15% 1-letter, ~45% 2-letter, ~40% 3-letter (matches real distribution)
+    int roll = rng_range(0, 20);
+    int slen = (roll < 3) ? 1 : (roll < 12) ? 2 : 3;
     for (int i = 0; i < slen; ++i)
         call += static_cast<char>('A' + rng_range(0, 26));
 

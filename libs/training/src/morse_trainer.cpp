@@ -1,9 +1,29 @@
 #include "morse_trainer.h"
 #include "../../cw-engine/include/char_morse_table.h"
+#include <cctype>
 
 // Adapted from m5core2-cwtrainer/lib/MorseTrainer.
 // State machine logic preserved exactly; millis() injected, String removed,
 // Serial debug calls removed, char2morse pulled from shared header.
+
+// Case-insensitive comparison that ignores spaces.  Extra/missing word
+// boundaries in the operator's reply don't matter — only the letters do.
+// e.g. "ge om t ks fer ca ll" matches "GE OM TKS FER CALL".
+static bool phrase_match(const std::string& a, const std::string& b) {
+    size_t ia = 0, ib = 0;
+    while (ia < a.size() && ib < b.size()) {
+        if (a[ia] == ' ') { ++ia; continue; }
+        if (b[ib] == ' ') { ++ib; continue; }
+        if (std::tolower(static_cast<unsigned char>(a[ia])) !=
+            std::tolower(static_cast<unsigned char>(b[ib])))
+            return false;
+        ++ia; ++ib;
+    }
+    // Skip trailing spaces
+    while (ia < a.size() && a[ia] == ' ') ++ia;
+    while (ib < b.size() && b[ib] == ' ') ++ib;
+    return ia == a.size() && ib == b.size();
+}
 
 MorseTrainer::MorseTrainer(sidetone_fn sidetone_cb,
                            new_phrase_fn phrase_cb,
@@ -74,7 +94,7 @@ void MorseTrainer::symbol_received(const std::string& symbol)
         received_phrase_.clear();
     } else {
         received_phrase_ += symbol;
-        if (received_phrase_ == phrase_plain_) {
+        if (phrase_match(received_phrase_, phrase_plain_)) {
             // Instantly trigger evaluation on next tick().
             last_keyer_received_ = 0;
         }
@@ -92,7 +112,7 @@ void MorseTrainer::tick()
         switch (current_echo_state_) {
         case EchoState::Receiving:
             if (now > last_keyer_received_ + ECHO_START_RECEIVE_DELAY_MS) {
-                bool correct = (phrase_plain_ == received_phrase_);
+                bool correct = phrase_match(phrase_plain_, received_phrase_);
                 if (correct) {
                     echo_repeat_count_     = 0;
                     current_echo_state_    = EchoState::Success;
