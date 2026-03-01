@@ -35,10 +35,12 @@ public:
                   float sustain_level, float release_s) override;
     void suspend() override;
     void poll() override;
+    void play_effect(SoundEffect effect) override;
 
 private:
     I2S_Sidetone   sidetone_;
     TLV320AIC31xx  codec_;
+    uint16_t       current_freq_ = 700;
 
     void codec_init_clocking();
     void codec_enable_outputs();

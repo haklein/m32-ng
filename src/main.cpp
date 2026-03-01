@@ -26,6 +26,7 @@
 #include <storage_nvs.h>    // PocketStorage (NVS)
 #include <battery.h>        // PocketBattery
 #include <esp_sleep.h>      // deep sleep + GPIO wakeup
+#include <SPIFFS.h>         // sound effects filesystem
 #endif
 
 // ── Common display helpers ─────────────────────────────────────────────────
@@ -270,6 +271,10 @@ void setup()
     lv_label_set_text(splash, "M32 NG");
     lv_obj_center(splash);
     lv_timer_handler();
+
+    // ── SPIFFS (sound effects, future file storage) ─────────────────────
+    if (!SPIFFS.begin(true))
+        Log.warningln("SPIFFS mount failed");
 
     // ── Audio ─────────────────────────────────────────────────────────────
     Log.verboseln("Audio init");

@@ -319,8 +319,16 @@ static void on_letter_decoded(const std::string& letter)
     } else if (s_active_mode == ActiveMode::ECHO) {
         s_trainer->symbol_received(letter);
         if (s_echo_rcvd_lbl) {
-            if      (letter == "<err>") { /* <HH> resets whole word */ s_echo_typed.clear(); }
-            else                        { s_echo_typed += letter; }
+            if (letter == "<err>") {
+                // <HH> removes the last word (back to previous space)
+                auto pos = s_echo_typed.rfind(' ');
+                if (pos != std::string::npos)
+                    s_echo_typed.erase(pos);
+                else
+                    s_echo_typed.clear();
+            } else {
+                s_echo_typed += letter;
+            }
             lv_label_set_text(s_echo_rcvd_lbl, s_echo_typed.c_str());
         }
     } else if (s_active_mode == ActiveMode::CHATBOT) {
@@ -1361,6 +1369,7 @@ static void app_ui_init(uint32_t rng_seed)
     s_trainer->set_state(MorseTrainer::TrainerState::Player);
     s_trainer->set_speed_wpm(s_settings.wpm);
     s_trainer->set_echo_result_fn([](const std::string& phrase, bool success) {
+        s_audio->play_effect(success ? SoundEffect::SUCCESS : SoundEffect::ERROR);
         // Only reveal on success; ERR keeps "?" so the word can be replayed blind
         if (success && s_echo_target_lbl)
             lv_label_set_text(s_echo_target_lbl, phrase.c_str());
@@ -1375,6 +1384,7 @@ static void app_ui_init(uint32_t rng_seed)
         }
     });
     s_trainer->set_echo_reveal_fn([](const std::string& phrase) {
+        s_audio->play_effect(SoundEffect::ERROR);
         // Max repeats exhausted — show correct phrase and "MISS"
         if (s_echo_target_lbl) lv_label_set_text(s_echo_target_lbl, phrase.c_str());
         s_echo_typed.clear();

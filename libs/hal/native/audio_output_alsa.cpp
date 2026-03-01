@@ -127,6 +127,21 @@ void NativeAudioOutputAlsa::set_adsr(float attack_s, float /*decay_s*/,
     adsr_dirty_.store(true);
 }
 
+void NativeAudioOutputAlsa::play_effect(SoundEffect effect)
+{
+    if (effect == SoundEffect::SUCCESS) {
+        tone_on(440); std::this_thread::sleep_for(std::chrono::milliseconds(97));
+        tone_off();   std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        tone_on(587); std::this_thread::sleep_for(std::chrono::milliseconds(193));
+        tone_off();
+    } else {
+        tone_on(311); std::this_thread::sleep_for(std::chrono::milliseconds(193));
+        tone_off();   std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        tone_on(330); std::this_thread::sleep_for(std::chrono::milliseconds(193));
+        tone_off();
+    }
+}
+
 void NativeAudioOutputAlsa::suspend()
 {
     if (running_.exchange(false) && audio_thread_.joinable()) {

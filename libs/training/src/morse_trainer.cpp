@@ -89,9 +89,12 @@ void MorseTrainer::symbol_received(const std::string& symbol)
 {
     last_keyer_received_ = millis_cb_();
     if (symbol == "<err>") {
-        // <HH> resets the whole received word, not just the last character
-        // if (!received_phrase_.empty()) received_phrase_.pop_back();
-        received_phrase_.clear();
+        // <HH> removes the last word (back to previous space, or clears all)
+        auto pos = received_phrase_.rfind(' ');
+        if (pos != std::string::npos)
+            received_phrase_.erase(pos);   // keep up to (not including) last space
+        else
+            received_phrase_.clear();
     } else {
         received_phrase_ += symbol;
         if (phrase_match(received_phrase_, phrase_plain_)) {

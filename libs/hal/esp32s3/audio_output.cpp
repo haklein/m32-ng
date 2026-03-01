@@ -119,6 +119,7 @@ void PocketAudioOutput::codec_enable_outputs()
 
 void PocketAudioOutput::tone_on(uint16_t frequency_hz)
 {
+    current_freq_ = frequency_hz;
     sidetone_.setFrequency(float(frequency_hz));
     sidetone_.on();
 }
@@ -169,6 +170,29 @@ void PocketAudioOutput::handle_headset_event()
         codec_.setSpeakerMute(false);
         codec_.setHeadphoneMute(true);
     }
+}
+
+void PocketAudioOutput::play_effect(SoundEffect effect)
+{
+    const char* path = (effect == SoundEffect::SUCCESS)
+                       ? "/sounds/success.mp3"
+                       : "/sounds/error.mp3";
+    if (!sidetone_.playSPIFFSFile(path)) {
+        // Tone fallback (matches original Morserino MorseOutput)
+        if (effect == SoundEffect::SUCCESS) {
+            sidetone_.setFrequency(440.0f); sidetone_.on(); delay(97);
+            sidetone_.off(); delay(20);
+            sidetone_.setFrequency(587.0f); sidetone_.on(); delay(193);
+            sidetone_.off();
+        } else {
+            sidetone_.setFrequency(311.0f); sidetone_.on(); delay(193);
+            sidetone_.off(); delay(20);
+            sidetone_.setFrequency(330.0f); sidetone_.on(); delay(193);
+            sidetone_.off();
+        }
+    }
+    // Restore CW sidetone frequency
+    sidetone_.setFrequency(float(current_freq_));
 }
 
 void PocketAudioOutput::suspend()

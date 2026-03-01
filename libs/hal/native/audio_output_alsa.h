@@ -34,6 +34,7 @@ public:
     void set_adsr(float attack_s, float decay_s,
                   float sustain_level, float release_s) override;
     void suspend() override;
+    void play_effect(SoundEffect effect) override;
 
 private:
     // ── Complex-rotor oscillator ────────────────────────────────────────────

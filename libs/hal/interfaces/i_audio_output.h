@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+// Sound effects for training feedback (echo trainer OK/ERR).
+enum class SoundEffect : uint8_t { SUCCESS, ERROR };
+
 // Sidetone and keyed-output audio abstraction.
 //
 // Pocket target: I2S -> TLV320AIC3100 codec (haklein/cw-i2s-sidetone +
@@ -35,4 +38,10 @@ public:
     // Poll for asynchronous hardware events (e.g. headphone plug/unplug).
     // Call from the main loop.  Default is a no-op.
     virtual void poll() {}
+
+    // Play a short sound effect (e.g. echo trainer OK/ERR).
+    // Pocket: tries SPIFFS MP3, falls back to tone sequence.
+    // Native: plays tone sequence via ALSA.
+    // Default is a no-op for platforms without audio effects.
+    virtual void play_effect(SoundEffect /*effect*/) {}
 };
