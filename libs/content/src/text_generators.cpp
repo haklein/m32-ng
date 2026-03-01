@@ -168,8 +168,18 @@ std::string TextGenerators::random_chars(int length, RandomOption option)
     return result;
 }
 
-std::string TextGenerators::random_qso_phrase()
+static int word_count(const std::string& s)
 {
+    if (s.empty()) return 0;
+    int n = 1;
+    for (char c : s) if (c == ' ') ++n;
+    return n;
+}
+
+std::string TextGenerators::random_qso_phrase(int max_words)
+{
+    // Retry with different templates if the result exceeds max_words.
+    for (int attempt = 0; attempt < 50; ++attempt) {
     const char* tmpl = QSO_TEMPLATES[rng_range(0, NUM_QSO_TEMPLATES)];
     std::string result;
     result.reserve(32);
@@ -223,5 +233,9 @@ std::string TextGenerators::random_qso_phrase()
             result += *p++;
         }
     }
-    return result;
+    if (max_words <= 0 || word_count(result) <= max_words)
+        return result;
+    } // retry loop
+    // All attempts exceeded max_words — return last result anyway.
+    return "CW";
 }

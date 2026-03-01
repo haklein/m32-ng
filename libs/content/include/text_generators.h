@@ -77,7 +77,8 @@ public:
     std::string random_chars_from_set(const std::string& charset, int length);
 
     // Random QSO phrase with template substitution (may contain spaces).
-    std::string random_qso_phrase();
+    // max_words: 0=unlimited, else retry until word count <= max_words.
+    std::string random_qso_phrase(int max_words = 0);
 
 private:
     std::mt19937& rng_;

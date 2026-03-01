@@ -34,7 +34,7 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 8;
+    static constexpr uint8_t VERSION = 9;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -64,6 +64,9 @@ struct AppSettings {
     // Quick start (VERSION 8)
     bool     quick_start  = false;  // auto-enter last mode on boot
     uint8_t  last_mode    = 0;      // 0=Keyer, 1=Generator, 2=Echo, 3=Chatbot
+    // VERSION 9
+    bool     adaptive_speed = true; // adjust WPM on echo success/failure
+    uint8_t  qso_max_words  = 0;   // 0=unlimited, else max words per QSO phrase
 };
 static AppSettings s_settings;
 
@@ -350,6 +353,7 @@ static void apply_settings()
     s_trainer->set_speed_wpm(s_settings.wpm);
     s_trainer->set_farnsworth_wpm(s_settings.farnsworth);
     s_trainer->set_max_echo_repeats(s_settings.echo_max_repeats);
+    s_trainer->set_adaptive_speed(s_settings.adaptive_speed);
     if (s_chatbot) {
         s_chatbot->set_speed_wpm(s_settings.wpm);
         static const QSODepth depths[] = {
@@ -390,7 +394,7 @@ static std::string content_phrase()
         case 3: return s_gen->random_chars(
                     ml > 0 ? ml : 5,
                     char_opts[std::min((int)s_settings.chars_group, 2)]);
-        case 4: return s_gen->random_qso_phrase();
+        case 4: return s_gen->random_qso_phrase((int)s_settings.qso_max_words);
     }
     return s_gen->random_word(ml);
 }
@@ -874,6 +878,21 @@ static lv_obj_t* build_settings_screen()
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
+    // Adaptive speed
+    {
+        lv_obj_t* row = make_row("Adaptive WPM");
+        lv_obj_t* cb = lv_checkbox_create(row);
+        lv_checkbox_set_text(cb, "");
+        if (s_settings.adaptive_speed) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_group_add_obj(s_settings_group, cb);
+        lv_obj_add_event_cb(cb, [](lv_event_t* e) {
+            s_settings.adaptive_speed =
+                lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+            apply_settings();
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
     // QSO depth
     {
         lv_obj_t* row = make_row("QSO Depth");
@@ -1003,15 +1022,24 @@ static lv_obj_t* build_content_screen()
 
     const bool compact       = (SCREEN_H <= 200);
     const lv_coord_t ROW_H   = compact ? 36 : 50;
-    const lv_coord_t START_Y = CONTENT_Y + (compact ? 4 : 10);
     const lv_coord_t COL2_X  = compact ? SCREEN_W / 2 : SCREEN_W / 2 + 20;
     const lv_coord_t LBL_X   = compact ? 8 : 16;
     const lv_coord_t LBL_OFF = compact ? 8 : 14;
     const lv_coord_t CTL_OFF = compact ? 4 : 8;
 
+    // Scrollable container below the status bar
+    lv_obj_t* cont = lv_obj_create(scr);
+    lv_obj_set_pos(cont, 0, CONTENT_Y);
+    lv_obj_set_size(cont, SCREEN_W, SCREEN_H - CONTENT_Y);
+    lv_obj_set_style_pad_all(cont, 0, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+
+    const lv_coord_t START_Y = compact ? 4 : 10;
+
     auto make_cb = [&](const char* text, bool checked,
                        lv_coord_t x, lv_coord_t y) -> lv_obj_t* {
-        lv_obj_t* cb = lv_checkbox_create(scr);
+        lv_obj_t* cb = lv_checkbox_create(cont);
         lv_checkbox_set_text(cb, text);
         if (checked) lv_obj_add_state(cb, LV_STATE_CHECKED);
         lv_obj_set_pos(cb, x, y);
@@ -1062,11 +1090,11 @@ static lv_obj_t* build_content_screen()
     // Row 2: Chars group dropdown  |  Koch spinbox
     const lv_coord_t R2_Y = START_Y + 2 * ROW_H;
 
-    lv_obj_t* cg_lbl = lv_label_create(scr);
+    lv_obj_t* cg_lbl = lv_label_create(cont);
     lv_label_set_text(cg_lbl, "Chars:");
     lv_obj_set_pos(cg_lbl, LBL_X, R2_Y + LBL_OFF);
 
-    lv_obj_t* cg_dd = lv_dropdown_create(scr);
+    lv_obj_t* cg_dd = lv_dropdown_create(cont);
     lv_dropdown_set_options(cg_dd, "Alpha\nAlpha+Num\nAll CW");
     lv_dropdown_set_selected(cg_dd, s_settings.chars_group);
     lv_obj_set_width(cg_dd, compact ? 110 : 140);
@@ -1078,11 +1106,11 @@ static lv_obj_t* build_content_screen()
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    lv_obj_t* kl_lbl = lv_label_create(scr);
+    lv_obj_t* kl_lbl = lv_label_create(cont);
     lv_label_set_text(kl_lbl, compact ? "Koch:" : "Koch (0=off):");
     lv_obj_set_pos(kl_lbl, COL2_X, R2_Y + LBL_OFF);
 
-    lv_obj_t* koch_spn = lv_spinbox_create(scr);
+    lv_obj_t* koch_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(koch_spn, 0, KOCH_MAX_LESSON);
     lv_spinbox_set_digit_count(koch_spn, 2);
     lv_spinbox_set_value(koch_spn, s_settings.koch_lesson);
@@ -1098,11 +1126,11 @@ static lv_obj_t* build_content_screen()
     // Row 3: Koch order dropdown  |  Max length spinbox
     const lv_coord_t R3_Y = START_Y + 3 * ROW_H;
 
-    lv_obj_t* ko_lbl = lv_label_create(scr);
+    lv_obj_t* ko_lbl = lv_label_create(cont);
     lv_label_set_text(ko_lbl, "Order:");
     lv_obj_set_pos(ko_lbl, LBL_X, R3_Y + LBL_OFF);
 
-    lv_obj_t* ko_dd = lv_dropdown_create(scr);
+    lv_obj_t* ko_dd = lv_dropdown_create(cont);
     lv_dropdown_set_options(ko_dd, "LCWO\nMorserino\nCW Academy\nLICW");
     lv_dropdown_set_selected(ko_dd, std::min((uint8_t)(KOCH_ORDER_COUNT - 1),
                                              s_settings.koch_order));
@@ -1115,11 +1143,11 @@ static lv_obj_t* build_content_screen()
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    lv_obj_t* ml_lbl = lv_label_create(scr);
+    lv_obj_t* ml_lbl = lv_label_create(cont);
     lv_label_set_text(ml_lbl, compact ? "Len:" : "Length:");
     lv_obj_set_pos(ml_lbl, COL2_X, R3_Y + LBL_OFF);
 
-    lv_obj_t* ml_spn = lv_spinbox_create(scr);
+    lv_obj_t* ml_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(ml_spn, 0, 15);
     lv_spinbox_set_digit_count(ml_spn, 2);
     lv_spinbox_set_value(ml_spn, s_settings.word_max_length);
@@ -1132,10 +1160,30 @@ static lv_obj_t* build_content_screen()
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
+    // Row 4: QSO max words spinbox
+    const lv_coord_t R4_Y = START_Y + 4 * ROW_H;
+
+    lv_obj_t* qw_lbl = lv_label_create(cont);
+    lv_label_set_text(qw_lbl, compact ? "QSO wds:" : "QSO words:");
+    lv_obj_set_pos(qw_lbl, LBL_X, R4_Y + LBL_OFF);
+
+    lv_obj_t* qw_spn = lv_spinbox_create(cont);
+    lv_spinbox_set_range(qw_spn, 0, 9);
+    lv_spinbox_set_digit_count(qw_spn, 1);
+    lv_spinbox_set_value(qw_spn, s_settings.qso_max_words);
+    lv_obj_set_width(qw_spn, compact ? 80 : 100);
+    lv_obj_set_pos(qw_spn, LBL_X + (compact ? 68 : 90), R4_Y + CTL_OFF);
+    lv_group_add_obj(s_content_group, qw_spn);
+    lv_obj_add_event_cb(qw_spn, [](lv_event_t* e) {
+        s_settings.qso_max_words = (uint8_t)lv_spinbox_get_value(
+            lv_event_get_target_obj(e));
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
 #ifdef NATIVE_BUILD
-    lv_obj_t* hint = lv_label_create(scr);
+    lv_obj_t* hint = lv_label_create(cont);
+    lv_obj_set_pos(hint, LBL_X, START_Y + 5 * ROW_H);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=toggle/edit    E=back");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
 #endif
 
     return scr;
