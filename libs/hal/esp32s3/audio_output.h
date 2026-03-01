@@ -30,7 +30,7 @@ public:
     void begin() override;
     void tone_on(uint16_t frequency_hz) override;
     void tone_off() override;
-    void set_volume(uint8_t level_0_to_10) override;
+    void set_volume(uint8_t level) override;
     void set_adsr(float attack_s, float decay_s,
                   float sustain_level, float release_s) override;
     void suspend() override;

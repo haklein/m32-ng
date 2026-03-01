@@ -34,13 +34,13 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 9;
+    static constexpr uint8_t VERSION = 10;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
     bool     mode_a       = false;   // false = Iambic B
     uint16_t freq_hz      = 700;
-    uint8_t  volume       = 7;
+    uint8_t  volume       = 14;     // 0-20; codec analog volume (2 dB/step)
     // Content
     bool     cont_words   = true;    // English words
     bool     cont_abbrevs = false;   // Ham radio abbreviations
@@ -920,12 +920,12 @@ static lv_obj_t* build_settings_screen()
 
     // Volume
     {
-        lv_obj_t* row = make_row("Volume (0-10)");
+        lv_obj_t* row = make_row("Volume (0-20)");
         lv_obj_t* spn = lv_spinbox_create(row);
-        lv_spinbox_set_range(spn, 0, 10);
-        lv_spinbox_set_digit_count(spn, 1);
+        lv_spinbox_set_range(spn, 0, 20);
+        lv_spinbox_set_digit_count(spn, 2);
         lv_spinbox_set_value(spn, s_settings.volume);
-        lv_obj_set_width(spn, 80);
+        lv_obj_set_width(spn, 100);
         lv_group_add_obj(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.volume = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
@@ -1369,7 +1369,7 @@ static void route_ui(KeyEvent ev)
             if (s_active_mode != ActiveMode::NONE) {
                 switch (s_encoder_mode) {
                     case EncoderMode::VOLUME:
-                        s_settings.volume = std::min((int)s_settings.volume + 1, 10);
+                        s_settings.volume = std::min((int)s_settings.volume + 1, 20);
                         s_audio->set_volume(s_settings.volume);
                         update_status_bar_info();
                         save_settings();
@@ -1470,7 +1470,7 @@ static void route(KeyEvent ev)
             if (s_active_mode != ActiveMode::NONE) {
                 switch (s_encoder_mode) {
                     case EncoderMode::VOLUME:
-                        s_settings.volume = std::min((int)s_settings.volume + 1, 10);
+                        s_settings.volume = std::min((int)s_settings.volume + 1, 20);
                         s_audio->set_volume(s_settings.volume);
                         update_status_bar_info();
                         save_settings();

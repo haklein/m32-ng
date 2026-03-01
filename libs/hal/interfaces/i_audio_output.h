@@ -25,8 +25,8 @@ public:
     // Stop tone (ADSR release applied).
     virtual void tone_off() = 0;
 
-    // Set output volume; 0 = mute, 10 = maximum.
-    virtual void set_volume(uint8_t level_0_to_10) = 0;
+    // Set output volume; 0 = mute, 20 = maximum.
+    virtual void set_volume(uint8_t level) = 0;
 
     // Configure ADSR envelope for the sidetone sine wave.
     virtual void set_adsr(float attack_s, float decay_s,

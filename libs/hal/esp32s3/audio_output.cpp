@@ -23,7 +23,6 @@ static void IRAM_ATTR isr_headset_detect() { s_hp_interrupt = true; }
 static constexpr int    SAMPLE_RATE  = 48000;
 static constexpr int    BUFFER_SIZE  = 32;      // I2S_Sidetone buffer_count
 static constexpr float  DEFAULT_FREQ = 700.0f;
-static constexpr float  DEFAULT_VOL  = 0.5f;
 
 PocketAudioOutput::PocketAudioOutput()
     : codec_(&Wire)
@@ -83,7 +82,7 @@ void PocketAudioOutput::begin()
 
     // ── 8. Sidetone defaults ─────────────────────────────────────────────────
     sidetone_.setFrequency(DEFAULT_FREQ);
-    sidetone_.setVolume(DEFAULT_VOL);
+    sidetone_.setVolume(1.0f);   // full amplitude — volume via codec analog stage
     sidetone_.setADSR(0.005f, 0.0f, 1.0f, 0.005f);
 }
 
@@ -129,15 +128,19 @@ void PocketAudioOutput::tone_off()
     sidetone_.off();
 }
 
-void PocketAudioOutput::set_volume(uint8_t level_0_to_10)
+void PocketAudioOutput::set_volume(uint8_t level)
 {
-    if (level_0_to_10 == 0) {
+    if (level == 0) {
         codec_.setDACMute(true);
         return;
     }
     codec_.setDACMute(false);
-    // Map 1..10 to 0.1..1.0 linear volume fed to VolumeStream.
-    sidetone_.setVolume(float(level_0_to_10) / 10.0f);
+    // Map 1..20 to -38..0 dB on codec headphone + speaker analog volume.
+    // 2 dB per step; linear in dB = perceptually logarithmic.
+    uint8_t clamped = std::min(level, uint8_t(20));
+    float dB = (float(clamped) - 20.0f) * 2.0f;
+    codec_.setHeadphoneVolume(dB, dB);
+    codec_.setSpeakerVolume(dB);
 }
 
 void PocketAudioOutput::set_adsr(float attack_s, float decay_s,

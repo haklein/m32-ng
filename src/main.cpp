@@ -165,7 +165,7 @@ void setup()
     Log.verboseln("Audio init");
     s_audio = new PocketAudioOutput();
     s_audio->begin();
-    s_audio->set_volume(7);
+    s_audio->set_volume(14);
     s_audio->set_adsr(0.005f, 0.0f, 1.0f, 0.005f);
 
     Log.verboseln("Playing VVV");

@@ -112,9 +112,9 @@ void NativeAudioOutputAlsa::tone_off()
     pending_cmd_.store(ToneCmd::Off);
 }
 
-void NativeAudioOutputAlsa::set_volume(uint8_t level_0_to_10)
+void NativeAudioOutputAlsa::set_volume(uint8_t level)
 {
-    gain_.store(float(std::min(uint8_t(10), level_0_to_10)) / 10.0f);
+    gain_.store(float(std::min(level, uint8_t(20))) / 20.0f);
 }
 
 void NativeAudioOutputAlsa::set_adsr(float attack_s, float /*decay_s*/,
