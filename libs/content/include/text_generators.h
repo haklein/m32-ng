@@ -76,6 +76,9 @@ public:
     // Random character group drawn from an explicit charset string.
     std::string random_chars_from_set(const std::string& charset, int length);
 
+    // Random QSO phrase with template substitution (may contain spaces).
+    std::string random_qso_phrase();
+
 private:
     std::mt19937& rng_;
 

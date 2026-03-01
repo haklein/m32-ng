@@ -1,9 +1,11 @@
 #include "text_generators.h"
 #include "../data/english_words.h"
 #include "../data/abbrevs.h"
+#include "../data/qso_phrases.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <map>
 
 // Adapted from m5core2-cwtrainer/lib/TextGenerators.
 // Algorithmic content preserved; Arduino::String -> std::string,
@@ -167,6 +169,64 @@ std::string TextGenerators::random_chars(int length, RandomOption option)
 
     for (int i = 0; i < length; ++i) {
         result += CW_CHARS[rng_range(s, e)];
+    }
+    return result;
+}
+
+std::string TextGenerators::random_qso_phrase()
+{
+    const char* tmpl = QSO_TEMPLATES[rng_range(0, NUM_QSO_TEMPLATES)];
+    std::string result;
+    result.reserve(32);
+
+    // Cache: each slot type resolves once per phrase so repeated
+    // placeholders (e.g. "RST {rst} {rst}") produce the same value.
+    std::map<std::string, std::string> cache;
+
+    for (const char* p = tmpl; *p; ) {
+        if (*p == '{') {
+            const char* end = std::strchr(p, '}');
+            if (!end) { result += *p++; continue; }
+            std::string slot(p + 1, end);
+            p = end + 1;
+
+            auto it = cache.find(slot);
+            if (it != cache.end()) {
+                result += it->second;
+                continue;
+            }
+
+            std::string val;
+            if      (slot == "name")  val = QSO_NAMES[rng_range(0, NUM_QSO_NAMES)];
+            else if (slot == "qth")   val = QSO_CITIES[rng_range(0, NUM_QSO_CITIES)];
+            else if (slot == "rst")   val = QSO_RST[rng_range(0, NUM_QSO_RST)];
+            else if (slot == "rig")   val = QSO_RIGS[rng_range(0, NUM_QSO_RIGS)];
+            else if (slot == "pwr")   val = QSO_POWERS[rng_range(0, NUM_QSO_POWERS)];
+            else if (slot == "ant")   val = QSO_ANTENNAS[rng_range(0, NUM_QSO_ANTENNAS)];
+            else if (slot == "wx")    val = QSO_WX[rng_range(0, NUM_QSO_WX)];
+            else if (slot == "condx") val = QSO_CONDX[rng_range(0, NUM_QSO_CONDX)];
+            else if (slot == "band")  val = QSO_BANDS[rng_range(0, NUM_QSO_BANDS)];
+            else if (slot == "call")  val = random_callsign(0);
+            else if (slot == "temp") {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%d", rng_range(-10, 40));
+                val = buf;
+            }
+            else if (slot == "age") {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%d", rng_range(20, 85));
+                val = buf;
+            }
+            else if (slot == "lic") {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%d", rng_range(1, 55));
+                val = buf;
+            }
+            cache[slot] = val;
+            result += val;
+        } else {
+            result += *p++;
+        }
     }
     return result;
 }

@@ -34,9 +34,9 @@ static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 6;
+    static constexpr uint8_t VERSION = 8;
     uint8_t  version      = VERSION;  // NVS blob migration marker
-    int      wpm          = 15;
+    int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
     bool     mode_a       = false;   // false = Iambic B
     uint16_t freq_hz      = 700;
@@ -46,6 +46,7 @@ struct AppSettings {
     bool     cont_abbrevs = false;   // Ham radio abbreviations
     bool     cont_calls   = false;   // Synthetic callsigns
     bool     cont_chars   = false;   // Random character groups
+    bool     cont_qso     = false;   // QSO phrase templates
     uint8_t  chars_group       = 0;   // 0=Alpha, 1=Alpha+Num, 2=All CW
     uint8_t  koch_lesson       = 0;   // 0=off, 1..N=first N Koch chars
     uint8_t  koch_order        = 0;   // KochOrder enum (0=LCWO, 1=Morserino, 2=CWAc, 3=LICW)
@@ -60,6 +61,9 @@ struct AppSettings {
     uint8_t  word_max_length = 0; // 0=any, 2-15 max chars per word/abbrev/call
     // Sleep (VERSION 5)
     uint8_t  sleep_timeout_min = 5; // 0=disabled, 1-60 minutes
+    // Quick start (VERSION 8)
+    bool     quick_start  = false;  // auto-enter last mode on boot
+    uint8_t  last_mode    = 0;      // 0=Keyer, 1=Generator, 2=Echo, 3=Chatbot
 };
 static AppSettings s_settings;
 
@@ -259,6 +263,7 @@ static lv_obj_t* build_content_screen();
 static void      apply_settings();
 static std::string content_phrase();
 static void      route(KeyEvent ev);
+static void      push_mode_screen(int idx);
 
 // ── LVGL encoder indev callback ────────────────────────────────────────────
 static void enc_read_cb(lv_indev_t*, lv_indev_data_t* d)
@@ -315,7 +320,7 @@ static void on_letter_decoded(const std::string& letter)
         s_trainer->symbol_received(letter);
         if (s_echo_rcvd_lbl) {
             if      (letter == "<err>") { /* <HH> resets whole word */ s_echo_typed.clear(); }
-            else if (letter != " ")     { s_echo_typed += letter; }
+            else                        { s_echo_typed += letter; }
             lv_label_set_text(s_echo_rcvd_lbl, s_echo_typed.c_str());
         }
     } else if (s_active_mode == ActiveMode::CHATBOT) {
@@ -360,11 +365,12 @@ static std::string content_phrase()
         return s_gen->random_chars_from_set(std::string(order, n), 5);
     }
     // Collect enabled content types
-    int types[4]; int nt = 0;
+    int types[5]; int nt = 0;
     if (s_settings.cont_words)   types[nt++] = 0;
     if (s_settings.cont_abbrevs) types[nt++] = 1;
     if (s_settings.cont_calls)   types[nt++] = 2;
     if (s_settings.cont_chars)   types[nt++] = 3;
+    if (s_settings.cont_qso)    types[nt++] = 4;
     int ml = (int)s_settings.word_max_length;
     if (nt == 0) return s_gen->random_word(ml);   // fallback: always something
     int choice = types[std::uniform_int_distribution<int>(0, nt - 1)(s_rng)];
@@ -376,8 +382,133 @@ static std::string content_phrase()
         case 3: return s_gen->random_chars(
                     ml > 0 ? ml : 5,
                     char_opts[std::min((int)s_settings.chars_group, 2)]);
+        case 4: return s_gen->random_qso_phrase();
     }
     return s_gen->random_word(ml);
+}
+
+// ── Push a mode/screen by index (reused by menu + quick start) ────────────
+static void push_mode_screen(int idx)
+{
+    lv_obj_t*       ns       = nullptr;
+    ScreenStack::Cb enter_cb = {};
+    ScreenStack::Cb leave_cb = {};
+
+    if (idx == 0) {
+        ns = build_keyer_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::KEYER;
+            lv_indev_set_group(s_enc_indev, nullptr);
+        };
+        leave_cb = []() {
+            s_active_mode              = ActiveMode::NONE;
+            s_encoder_mode             = EncoderMode::WPM;
+            s_keyer_word_pending       = false;
+            s_keyer_last_element_end_t = 0;
+            delete s_keyer_tf; s_keyer_tf = nullptr;
+            delete s_active_sb; s_active_sb = nullptr;
+        };
+    } else if (idx == 1) {
+        ns = build_generator_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::GENERATOR;
+            s_gen_paused  = false;
+            s_trainer->set_state(MorseTrainer::TrainerState::Player);
+            s_trainer->set_playing();
+            lv_indev_set_group(s_enc_indev, nullptr);
+        };
+        leave_cb = []() {
+            s_active_mode      = ActiveMode::NONE;
+            s_encoder_mode     = EncoderMode::WPM;
+            s_trainer->set_idle();
+            s_audio->tone_off();
+            s_pending_gen_phrase.clear();
+            delete s_gen_tf; s_gen_tf = nullptr;
+            delete s_active_sb; s_active_sb = nullptr;
+        };
+    } else if (idx == 2) {
+        ns = build_echo_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::ECHO;
+            s_trainer->set_state(MorseTrainer::TrainerState::Echo);
+            s_trainer->set_playing();
+            lv_indev_set_group(s_enc_indev, nullptr);
+        };
+        leave_cb = []() {
+            s_active_mode      = ActiveMode::NONE;
+            s_encoder_mode     = EncoderMode::WPM;
+            s_trainer->set_idle();
+            s_trainer->set_state(MorseTrainer::TrainerState::Player);
+            s_audio->tone_off();
+            s_echo_target_lbl = nullptr;
+            s_echo_rcvd_lbl   = nullptr;
+            s_echo_result_lbl = nullptr;
+            delete s_active_sb; s_active_sb = nullptr;
+        };
+    } else if (idx == 3) {
+        ns = build_chatbot_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::CHATBOT;
+            s_chatbot = new CWChatbot(
+                // send_cb: queue phrase for MorseTrainer to play
+                [](const std::string& text) {
+                    s_chatbot_pending_phrase = text;
+                    s_chatbot_tx_active = true;
+                    if (s_chatbot_bot_tf)
+                        s_chatbot_bot_tf->add_string(text + " ");
+                    s_trainer->set_state(MorseTrainer::TrainerState::Player);
+                    s_trainer->set_playing();
+                },
+                // speed_cb: update WPM
+                [](int wpm) {
+                    s_settings.wpm = wpm;
+                    apply_settings();
+                    save_settings();
+                },
+                // event_cb
+                [](QSOEvent) {},
+                app_millis
+            );
+            s_chatbot->set_operator_call("W1TEST");
+            s_chatbot->set_speed_wpm(s_settings.wpm);
+            static const QSODepth depths[] = {
+                QSODepth::MINIMAL, QSODepth::STANDARD, QSODepth::RAGCHEW };
+            s_chatbot->set_qso_depth(
+                depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
+            s_chatbot->set_rng_seed((unsigned int)app_millis());
+            s_chatbot->start();
+            lv_indev_set_group(s_enc_indev, nullptr);
+        };
+        leave_cb = []() {
+            s_active_mode      = ActiveMode::NONE;
+            s_encoder_mode     = EncoderMode::WPM;
+            s_trainer->set_idle();
+            s_audio->tone_off();
+            delete s_chatbot; s_chatbot = nullptr;
+            s_chatbot_pending_phrase.clear();
+            s_chatbot_tx_active = false;
+            delete s_chatbot_bot_tf;  s_chatbot_bot_tf  = nullptr;
+            delete s_chatbot_oper_tf; s_chatbot_oper_tf = nullptr;
+            s_chatbot_state_lbl = nullptr;
+            delete s_active_sb; s_active_sb = nullptr;
+        };
+    } else if (idx == 4) {
+        ns = build_content_screen();
+        enter_cb = []() { lv_indev_set_group(s_enc_indev, s_content_group); };
+        leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
+    } else {
+        ns = build_settings_screen();
+        enter_cb = []() { lv_indev_set_group(s_enc_indev, s_settings_group); };
+        leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
+    }
+
+    // Remember last CW mode (0–3) for quick start
+    if (idx <= 3) {
+        s_settings.last_mode = (uint8_t)idx;
+        save_settings();
+    }
+
+    s_stack.push(ns, std::move(enter_cb), std::move(leave_cb));
 }
 
 // ── Screen: Main Menu ──────────────────────────────────────────────────────
@@ -410,122 +541,6 @@ static lv_obj_t* build_main_menu()
     if (s_menu_group) lv_group_del(s_menu_group);
     s_menu_group = lv_group_create();
 
-    static const auto push_screen = [](lv_event_t* e) {
-        int idx = (int)(intptr_t)lv_event_get_user_data(e);
-        lv_obj_t*       ns       = nullptr;
-        ScreenStack::Cb enter_cb = {};
-        ScreenStack::Cb leave_cb = {};
-
-        if (idx == 0) {
-            ns = build_keyer_screen();
-            enter_cb = []() {
-                s_active_mode = ActiveMode::KEYER;
-                lv_indev_set_group(s_enc_indev, nullptr);
-            };
-            leave_cb = []() {
-                s_active_mode              = ActiveMode::NONE;
-                s_encoder_mode             = EncoderMode::WPM;
-                s_keyer_word_pending       = false;
-                s_keyer_last_element_end_t = 0;
-                delete s_keyer_tf; s_keyer_tf = nullptr;
-                delete s_active_sb; s_active_sb = nullptr;
-            };
-        } else if (idx == 1) {
-            ns = build_generator_screen();
-            enter_cb = []() {
-                s_active_mode = ActiveMode::GENERATOR;
-                s_gen_paused  = false;
-                s_trainer->set_state(MorseTrainer::TrainerState::Player);
-                s_trainer->set_playing();
-                lv_indev_set_group(s_enc_indev, nullptr);
-            };
-            leave_cb = []() {
-                s_active_mode      = ActiveMode::NONE;
-                s_encoder_mode     = EncoderMode::WPM;
-                s_trainer->set_idle();
-                s_audio->tone_off();
-                s_pending_gen_phrase.clear();
-                delete s_gen_tf; s_gen_tf = nullptr;
-                delete s_active_sb; s_active_sb = nullptr;
-            };
-        } else if (idx == 2) {
-            ns = build_echo_screen();
-            enter_cb = []() {
-                s_active_mode = ActiveMode::ECHO;
-                s_trainer->set_state(MorseTrainer::TrainerState::Echo);
-                s_trainer->set_playing();
-                lv_indev_set_group(s_enc_indev, nullptr);
-            };
-            leave_cb = []() {
-                s_active_mode      = ActiveMode::NONE;
-                s_encoder_mode     = EncoderMode::WPM;
-                s_trainer->set_idle();
-                s_trainer->set_state(MorseTrainer::TrainerState::Player);
-                s_audio->tone_off();
-                s_echo_target_lbl = nullptr;
-                s_echo_rcvd_lbl   = nullptr;
-                s_echo_result_lbl = nullptr;
-                delete s_active_sb; s_active_sb = nullptr;
-            };
-        } else if (idx == 3) {
-            ns = build_chatbot_screen();
-            enter_cb = []() {
-                s_active_mode = ActiveMode::CHATBOT;
-                s_chatbot = new CWChatbot(
-                    // send_cb: queue phrase for MorseTrainer to play
-                    [](const std::string& text) {
-                        s_chatbot_pending_phrase = text;
-                        s_chatbot_tx_active = true;
-                        if (s_chatbot_bot_tf)
-                            s_chatbot_bot_tf->add_string(text + " ");
-                        s_trainer->set_state(MorseTrainer::TrainerState::Player);
-                        s_trainer->set_playing();
-                    },
-                    // speed_cb: update WPM
-                    [](int wpm) {
-                        s_settings.wpm = wpm;
-                        apply_settings();
-                        save_settings();
-                    },
-                    // event_cb
-                    [](QSOEvent) {},
-                    app_millis
-                );
-                s_chatbot->set_operator_call("W1TEST");
-                s_chatbot->set_speed_wpm(s_settings.wpm);
-                static const QSODepth depths[] = {
-                    QSODepth::MINIMAL, QSODepth::STANDARD, QSODepth::RAGCHEW };
-                s_chatbot->set_qso_depth(
-                    depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
-                s_chatbot->set_rng_seed((unsigned int)app_millis());
-                s_chatbot->start();
-                lv_indev_set_group(s_enc_indev, nullptr);
-            };
-            leave_cb = []() {
-                s_active_mode      = ActiveMode::NONE;
-                s_encoder_mode     = EncoderMode::WPM;
-                s_trainer->set_idle();
-                s_audio->tone_off();
-                delete s_chatbot; s_chatbot = nullptr;
-                s_chatbot_pending_phrase.clear();
-                s_chatbot_tx_active = false;
-                delete s_chatbot_bot_tf;  s_chatbot_bot_tf  = nullptr;
-                delete s_chatbot_oper_tf; s_chatbot_oper_tf = nullptr;
-                s_chatbot_state_lbl = nullptr;
-                delete s_active_sb; s_active_sb = nullptr;
-            };
-        } else if (idx == 4) {
-            ns = build_content_screen();
-            enter_cb = []() { lv_indev_set_group(s_enc_indev, s_content_group); };
-            leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
-        } else {
-            ns = build_settings_screen();
-            enter_cb = []() { lv_indev_set_group(s_enc_indev, s_settings_group); };
-            leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
-        }
-        s_stack.push(ns, std::move(enter_cb), std::move(leave_cb));
-    };
-
     static const struct { const char* icon; const char* label; } items[] = {
         { LV_SYMBOL_AUDIO,    "CW Keyer"      },
         { LV_SYMBOL_PLAY,     "CW Generator"  },
@@ -537,7 +552,9 @@ static lv_obj_t* build_main_menu()
     for (int i = 0; i < 6; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_group_add_obj(s_menu_group, btn);
-        lv_obj_add_event_cb(btn, push_screen, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            push_mode_screen((int)(intptr_t)lv_event_get_user_data(e));
+        }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
 
     return scr;
@@ -939,6 +956,20 @@ static lv_obj_t* build_settings_screen()
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
+    // Quick Start (auto-enter last mode on boot)
+    {
+        lv_obj_t* row = make_row("Quick Start");
+        lv_obj_t* cb = lv_checkbox_create(row);
+        lv_checkbox_set_text(cb, "");
+        if (s_settings.quick_start) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        lv_group_add_obj(s_settings_group, cb);
+        lv_obj_add_event_cb(cb, [](lv_event_t* e) {
+            s_settings.quick_start =
+                (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=edit value    E=back");
@@ -985,11 +1016,14 @@ static lv_obj_t* build_content_screen()
                                  LBL_X, START_Y + 0 * ROW_H);
     lv_obj_t* cb_abbr  = make_cb("Abbrevs",   s_settings.cont_abbrevs,
                                  COL2_X, START_Y + 0 * ROW_H);
-    // Row 1: Callsigns | Chars
+    // Row 1: Callsigns | Chars | QSO
     lv_obj_t* cb_calls = make_cb("Callsigns", s_settings.cont_calls,
                                  LBL_X, START_Y + 1 * ROW_H);
     lv_obj_t* cb_chars = make_cb("Chars",     s_settings.cont_chars,
                                  COL2_X, START_Y + 1 * ROW_H);
+    const lv_coord_t COL3_X = compact ? 220 : SCREEN_W * 3 / 4;
+    lv_obj_t* cb_qso   = make_cb("QSO",       s_settings.cont_qso,
+                                 COL3_X, START_Y + 1 * ROW_H);
 
     lv_obj_add_event_cb(cb_words, [](lv_event_t* e) {
         s_settings.cont_words = (lv_obj_get_state(lv_event_get_target_obj(e))
@@ -1009,6 +1043,11 @@ static lv_obj_t* build_content_screen()
     lv_obj_add_event_cb(cb_chars, [](lv_event_t* e) {
         s_settings.cont_chars = (lv_obj_get_state(lv_event_get_target_obj(e))
                                  & LV_STATE_CHECKED) != 0;
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(cb_qso, [](lv_event_t* e) {
+        s_settings.cont_qso = (lv_obj_get_state(lv_event_get_target_obj(e))
+                               & LV_STATE_CHECKED) != 0;
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -1362,6 +1401,11 @@ static void app_ui_init(uint32_t rng_seed)
             if (f) lv_obj_add_state(f, LV_STATE_FOCUS_KEY);
         },
         {});
+
+    // Quick start: auto-jump into last CW mode
+    if (s_settings.quick_start && s_settings.last_mode <= 3) {
+        push_mode_screen(s_settings.last_mode);
+    }
 }
 
 // ── CW engine + LVGL tick dispatch ────────────────────────────────────────
