@@ -44,7 +44,7 @@ private:
     static constexpr uint32_t LONG_PRESS_MS   = 500;
     static constexpr int      STEPS_PER_DETENT = 2;   // half-quad encoder
     static constexpr uint32_t HYST_ON         = 4000;  // press threshold above idle
-    static constexpr uint32_t HYST_OFF        = 2000;  // release threshold above idle
+    static constexpr uint32_t HYST_OFF        = 1000;  // release threshold above idle
 
     struct ButtonState {
         bool     pressed   = false;
