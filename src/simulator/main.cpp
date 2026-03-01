@@ -76,7 +76,7 @@ int main(void)
 
     Uint32 last_tick = SDL_GetTicks();
     while (!s_quit) {
-        SDL_Delay(5);
+        SDL_Delay(1);
         Uint32 now = SDL_GetTicks();
         lv_tick_inc(now - last_tick);
         last_tick = now;

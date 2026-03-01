@@ -323,7 +323,7 @@ void loop()
     KeyEvent ev;
     while (s_keys->poll(ev)) route(ev);
     app_ui_tick();
-    delay(5);
+    delay(1);
 }
 
 #else // !BOARD_POCKETWROOM

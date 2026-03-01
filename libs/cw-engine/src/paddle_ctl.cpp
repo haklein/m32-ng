@@ -1,98 +1,67 @@
 #include "paddle_ctl.h"
 
-PaddleCtl::PaddleCtl(unsigned long state_change_threshold, lever_state_changed_fun_ptr state_changed_cb, millis_fun_ptr millis_cb)
-{
-    this->state_change_threshold = state_change_threshold;
-    this->state_changed_cb = state_changed_cb;
-    this->millis_cb = millis_cb;
-}
+PaddleCtl::PaddleCtl(unsigned long debounce_ms,
+                     lever_state_changed_fun_ptr state_changed_cb,
+                     millis_fun_ptr millis_cb)
+    : millis_cb_(millis_cb)
+    , debounce_ms_(debounce_ms)
+    , state_changed_cb_(state_changed_cb)
+{}
 
 void PaddleCtl::setDotPushed(bool pushed)
 {
-    onLeverEvent(pushed ? LEVER_EVENT_DOT_ON : LEVER_EVENT_DOT_OFF);
+    if (pushed != dit_.raw) {
+        dit_.raw     = pushed;
+        dit_.changed = millis_cb_();
+    }
 }
 
 void PaddleCtl::setDashPushed(bool pushed)
 {
-    onLeverEvent(pushed ? LEVER_EVENT_DASH_ON : LEVER_EVENT_DASH_OFF);
-}
-
-void PaddleCtl::onLeverEvent(LeverEvent lever_event)
-{
-    LeverState new_next_lever_state = getNextLeverState(lever_event);
-    if (next_lever_state == new_next_lever_state)
-    {
-        return;
-    }
-    next_lever_state = new_next_lever_state;
-    next_lever_state_changed = millis_cb();
-}
-
-LeverState PaddleCtl::getNextLeverState(LeverEvent lever_event)
-{
-    switch (next_lever_state)
-    {
-    case LEVER_UNSET:
-        switch (lever_event)
-        {
-        case LEVER_EVENT_DOT_ON:
-            return LEVER_DOT;
-        case LEVER_EVENT_DASH_ON:
-            return LEVER_DASH;
-        default:
-            return next_lever_state;
-        }
-    case LEVER_DOT:
-        switch (lever_event)
-        {
-        case LEVER_EVENT_DASH_ON:
-            return LEVER_DOT_DASH;
-        case LEVER_EVENT_DOT_OFF:
-            return LEVER_UNSET;
-        default:
-            return next_lever_state;
-        }
-    case LEVER_DASH:
-        switch (lever_event)
-        {
-        case LEVER_EVENT_DOT_ON:
-            return LEVER_DASH_DOT;
-        case LEVER_EVENT_DASH_OFF:
-            return LEVER_UNSET;
-        default:
-            return next_lever_state;
-        }
-    case LEVER_DASH_DOT:
-    case LEVER_DOT_DASH:
-        switch (lever_event)
-        {
-        case LEVER_EVENT_DOT_OFF:
-            return LEVER_DASH;
-        case LEVER_EVENT_DASH_OFF:
-            return LEVER_DOT;
-        default:
-            return next_lever_state;
-        }
-    default:
-        return next_lever_state;
+    if (pushed != dah_.raw) {
+        dah_.raw     = pushed;
+        dah_.changed = millis_cb_();
     }
 }
 
-bool PaddleCtl::nextStateReady()
+LeverState PaddleCtl::combine(bool dit, bool dah, LeverState prev)
 {
-    if (next_lever_state_changed == 0)
-    {
-        return false;
+    if (dit && dah) {
+        // Preserve squeeze direction from the lever that was already active.
+        if (prev == LEVER_DOT)      return LEVER_DOT_DASH;
+        if (prev == LEVER_DASH)     return LEVER_DASH_DOT;
+        // Already in a squeeze — keep same direction.
+        if (prev == LEVER_DOT_DASH || prev == LEVER_DASH_DOT)
+            return prev;
+        // Both pressed from idle — default (shouldn't happen in practice).
+        return LEVER_DOT_DASH;
     }
-    return (millis_cb() - next_lever_state_changed) > state_change_threshold;
+    if (dit) return LEVER_DOT;
+    if (dah) return LEVER_DASH;
+    return LEVER_UNSET;
 }
 
 void PaddleCtl::tick()
 {
-    if (nextStateReady())
-    {
-        next_lever_state_changed = 0;
-        current_lever_state = next_lever_state;
-        state_changed_cb(current_lever_state);
+    unsigned long now = millis_cb_();
+    bool changed = false;
+
+    // Debounce dit independently.
+    if (dit_.raw != dit_.stable && (now - dit_.changed) > debounce_ms_) {
+        dit_.stable = dit_.raw;
+        changed = true;
+    }
+    // Debounce dah independently.
+    if (dah_.raw != dah_.stable && (now - dah_.changed) > debounce_ms_) {
+        dah_.stable = dah_.raw;
+        changed = true;
+    }
+
+    if (changed) {
+        LeverState next = combine(dit_.stable, dah_.stable, current_);
+        if (next != current_) {
+            current_ = next;
+            state_changed_cb_(next);
+        }
     }
 }
