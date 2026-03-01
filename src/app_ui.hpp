@@ -88,6 +88,30 @@ static IStorage*     s_storage = nullptr;  // nullptr on simulator (no persisten
 static uint8_t (*s_read_battery_percent)() = nullptr;  // 0–100, or 255 if n/a
 static bool    (*s_is_charging)()          = nullptr;
 
+// ── Dedicated CW task (pocketwroom only) ─────────────────────────────────
+// Moves PaddleCtl/IambicKeyer/StraightKeyer/MorseDecoder to a high-priority
+// FreeRTOS task on Core 1, isolating CW timing from LVGL render spikes.
+#ifdef BOARD_POCKETWROOM
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+
+struct DecodedSymbol {
+    char text[12];   // longest prosign: "<err>" = 5 + NUL
+};
+
+static QueueHandle_t s_ui_event_queue      = nullptr;   // KeyEvent, depth 32
+static QueueHandle_t s_decoded_symbol_queue = nullptr;   // DecodedSymbol, depth 16
+static TaskHandle_t  s_cw_task_handle      = nullptr;
+
+// Written by UI task (mode enter/leave), read by CW task
+static volatile bool s_cw_engine_active = false;
+
+// Written by CW task, read by UI task
+static volatile unsigned long s_cw_last_element_end_t = 0;
+static volatile bool          s_cw_tame_echo          = false;
+#endif
+
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
 {
@@ -215,31 +239,43 @@ static bool cw_mode_active();  // defined below
 // StraightKeyer polls the key, applies noise-blanker debouncing, and fires
 // STRAIGHT_ON/OFF for sidetone plus DOT_ON/DASH_ON (adaptive classification)
 // fed into MorseDecoder.  STOPPED fires at the inter-character gap.
+// on_straight_state fires from StraightKeyer::decode().
+// On pocketwroom this runs on the CW task — must not touch LVGL or MorseTrainer.
 static void on_straight_state(PlayState ps)
 {
+#ifdef BOARD_POCKETWROOM
+    if (!s_cw_engine_active) return;
+#else
     if (!cw_mode_active()) return;
+#endif
     switch (ps) {
     case PLAY_STATE_STRAIGHT_ON:
         s_audio->tone_on(s_settings.freq_hz);
         s_decoder->set_transmitting(true);
+#ifdef BOARD_POCKETWROOM
+        s_cw_last_element_end_t = (unsigned long)app_millis();
+        s_cw_tame_echo = true;
+#else
         s_keyer_last_element_end_t = (unsigned long)app_millis();
         if (s_active_mode == ActiveMode::ECHO)
             s_trainer->tame_echo_timeout();
+#endif
         break;
     case PLAY_STATE_DOT_ON:
     case PLAY_STATE_DASH_ON:
         if (ps == PLAY_STATE_DOT_ON) s_decoder->append_dot();
         else                         s_decoder->append_dash();
-        // Adapt decoder threshold to operator's actual sending speed.
-        // StraightKeyer tracks dit_avg adaptively; use 2× as the decode
-        // timeout (between 1×dit inter-element and 3×dit inter-character).
         if (s_straight_keyer)
             s_decoder->set_decode_threshold(s_straight_keyer->get_dit_avg() * 2);
         break;
     case PLAY_STATE_STRAIGHT_OFF:
         s_audio->tone_off();
         s_decoder->set_transmitting(false);
+#ifdef BOARD_POCKETWROOM
+        s_cw_last_element_end_t = (unsigned long)app_millis();
+#else
         s_keyer_last_element_end_t = (unsigned long)app_millis();
+#endif
         break;
     case PLAY_STATE_STOPPED:
         break;
@@ -283,6 +319,9 @@ static void enc_read_cb(lv_indev_t*, lv_indev_data_t* d)
 }
 
 // ── CW engine callbacks ────────────────────────────────────────────────────
+// on_play_state fires from IambicKeyer::tick().
+// On pocketwroom this runs on the CW task — must not touch LVGL.
+// s_audio->tone_on/off() is lock-free; s_decoder is on the same task.
 static void on_play_state(PlayState state)
 {
     switch (state) {
@@ -290,19 +329,31 @@ static void on_play_state(PlayState state)
         case PLAY_STATE_DASH_ON:
             s_audio->tone_on(s_settings.freq_hz);
             s_decoder->set_transmitting(true);
+#ifdef BOARD_POCKETWROOM
+            s_cw_last_element_end_t = (unsigned long)app_millis();
+#else
             s_keyer_last_element_end_t = (unsigned long)app_millis();
+#endif
             break;
         case PLAY_STATE_DOT_OFF:
             s_audio->tone_off();
             s_decoder->append_dot();
             s_decoder->set_transmitting(false);
+#ifdef BOARD_POCKETWROOM
+            s_cw_last_element_end_t = (unsigned long)app_millis();
+#else
             s_keyer_last_element_end_t = (unsigned long)app_millis();
+#endif
             break;
         case PLAY_STATE_DASH_OFF:
             s_audio->tone_off();
             s_decoder->append_dash();
             s_decoder->set_transmitting(false);
+#ifdef BOARD_POCKETWROOM
+            s_cw_last_element_end_t = (unsigned long)app_millis();
+#else
             s_keyer_last_element_end_t = (unsigned long)app_millis();
+#endif
             break;
         default:
             break;
@@ -429,9 +480,15 @@ static void push_mode_screen(int idx)
         ns = build_keyer_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::KEYER;
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = true;
+#endif
             lv_indev_set_group(s_enc_indev, nullptr);
         };
         leave_cb = []() {
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = false;
+#endif
             s_active_mode              = ActiveMode::NONE;
             s_encoder_mode             = EncoderMode::WPM;
             s_keyer_word_pending       = false;
@@ -461,11 +518,17 @@ static void push_mode_screen(int idx)
         ns = build_echo_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::ECHO;
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = true;
+#endif
             s_trainer->set_state(MorseTrainer::TrainerState::Echo);
             s_trainer->set_playing();
             lv_indev_set_group(s_enc_indev, nullptr);
         };
         leave_cb = []() {
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = false;
+#endif
             s_active_mode      = ActiveMode::NONE;
             s_encoder_mode     = EncoderMode::WPM;
             s_trainer->set_idle();
@@ -480,6 +543,9 @@ static void push_mode_screen(int idx)
         ns = build_chatbot_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::CHATBOT;
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = true;
+#endif
             s_chatbot = new CWChatbot(
                 // send_cb: queue phrase for MorseTrainer to play
                 [](const std::string& text) {
@@ -511,6 +577,9 @@ static void push_mode_screen(int idx)
             lv_indev_set_group(s_enc_indev, nullptr);
         };
         leave_cb = []() {
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = false;
+#endif
             s_active_mode      = ActiveMode::NONE;
             s_encoder_mode     = EncoderMode::WPM;
             s_trainer->set_idle();
@@ -1209,6 +1278,189 @@ static lv_obj_t* build_content_screen()
 }
 
 // ── Key event router ───────────────────────────────────────────────────────
+
+#ifdef BOARD_POCKETWROOM
+// ── route_cw(): runs on the dedicated CW task (Core 1, priority 10) ──────
+// Only handles CW-related events: touch paddles, external paddles, straight
+// key.  Must NOT call any LVGL or MorseTrainer functions.
+static void route_cw(KeyEvent ev)
+{
+    switch (ev) {
+        // ── Touch paddles (always iambic, obey paddle_swap) ─────────────
+        case KeyEvent::TOUCH_LEFT_DOWN:
+            if (s_cw_engine_active) {
+                if (s_settings.paddle_swap) s_paddle->setDashPushed(true);
+                else                        s_paddle->setDotPushed(true);
+            }
+            s_cw_tame_echo = true;
+            break;
+        case KeyEvent::TOUCH_LEFT_UP:
+            if (s_cw_engine_active) {
+                if (s_settings.paddle_swap) s_paddle->setDashPushed(false);
+                else                        s_paddle->setDotPushed(false);
+            }
+            break;
+        case KeyEvent::TOUCH_RIGHT_DOWN:
+            if (s_cw_engine_active) {
+                if (s_settings.paddle_swap) s_paddle->setDotPushed(true);
+                else                        s_paddle->setDashPushed(true);
+            }
+            s_cw_tame_echo = true;
+            break;
+        case KeyEvent::TOUCH_RIGHT_UP:
+            if (s_cw_engine_active) {
+                if (s_settings.paddle_swap) s_paddle->setDotPushed(false);
+                else                        s_paddle->setDashPushed(false);
+            }
+            break;
+
+        // ── External paddle jack (straight or iambic, obey ext_key_swap) ─
+        case KeyEvent::PADDLE_DIT_DOWN:
+        case KeyEvent::PADDLE_DAH_DOWN: {
+            bool phys_dit = (ev == KeyEvent::PADDLE_DIT_DOWN);
+            if (s_settings.ext_key_iambic) {
+                bool is_dit = s_settings.ext_key_swap ? !phys_dit : phys_dit;
+                if (s_cw_engine_active) {
+                    if (is_dit) s_paddle->setDotPushed(true);
+                    else        s_paddle->setDashPushed(true);
+                }
+                s_cw_tame_echo = true;
+            } else {
+                s_straight_key_state = true;
+            }
+            break;
+        }
+        case KeyEvent::PADDLE_DIT_UP:
+        case KeyEvent::PADDLE_DAH_UP: {
+            bool phys_dit = (ev == KeyEvent::PADDLE_DIT_UP);
+            if (s_settings.ext_key_iambic) {
+                bool is_dit = s_settings.ext_key_swap ? !phys_dit : phys_dit;
+                if (s_cw_engine_active) {
+                    if (is_dit) s_paddle->setDotPushed(false);
+                    else        s_paddle->setDashPushed(false);
+                }
+            } else {
+                s_straight_key_state = false;
+            }
+            break;
+        }
+
+        // ── Straight key ────────────────────────────────────────────────
+        case KeyEvent::STRAIGHT_DOWN:
+            s_straight_key_state = true;
+            break;
+        case KeyEvent::STRAIGHT_UP:
+            s_straight_key_state = false;
+            break;
+
+        default:
+            break;
+    }
+}
+
+// ── route_ui(): runs on the Arduino loop task ────────────────────────────
+// Handles encoder, buttons — anything that touches LVGL or MorseTrainer.
+static void route_ui(KeyEvent ev)
+{
+    reset_activity_timer();
+    switch (ev) {
+        case KeyEvent::ENCODER_CW:
+            s_enc_diff++;
+            if (s_active_mode != ActiveMode::NONE) {
+                switch (s_encoder_mode) {
+                    case EncoderMode::VOLUME:
+                        s_settings.volume = std::min((int)s_settings.volume + 1, 10);
+                        s_audio->set_volume(s_settings.volume);
+                        update_status_bar_info();
+                        save_settings();
+                        break;
+                    case EncoderMode::SCROLL: {
+                        lv_obj_t* t = active_scroll_target();
+                        if (t) lv_obj_scroll_by(t, 0, -20, LV_ANIM_OFF);
+                        break;
+                    }
+                    default:
+                        s_settings.wpm = std::min(s_settings.wpm + 1, 40);
+                        apply_settings();
+                        save_settings();
+                        break;
+                }
+            }
+            break;
+        case KeyEvent::ENCODER_CCW:
+            s_enc_diff--;
+            if (s_active_mode != ActiveMode::NONE) {
+                switch (s_encoder_mode) {
+                    case EncoderMode::VOLUME:
+                        s_settings.volume = (s_settings.volume > 0)
+                            ? s_settings.volume - 1 : 0;
+                        s_audio->set_volume(s_settings.volume);
+                        update_status_bar_info();
+                        save_settings();
+                        break;
+                    case EncoderMode::SCROLL: {
+                        lv_obj_t* t = active_scroll_target();
+                        if (t) lv_obj_scroll_by(t, 0, 20, LV_ANIM_OFF);
+                        break;
+                    }
+                    default:
+                        s_settings.wpm = std::max(s_settings.wpm - 1, 5);
+                        apply_settings();
+                        save_settings();
+                        break;
+                }
+            }
+            break;
+
+        case KeyEvent::BUTTON_ENCODER_SHORT:
+            if (s_active_mode == ActiveMode::GENERATOR ||
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) {
+                s_gen_paused = !s_gen_paused;
+                if (s_gen_paused) s_trainer->set_idle();
+                else              s_trainer->set_playing();
+            } else {
+                s_enc_press_frames = 2;
+            }
+            break;
+        case KeyEvent::BUTTON_ENCODER_LONG: {
+            lv_group_t* grp = lv_indev_get_group(s_enc_indev);
+            if (grp && lv_group_get_editing(grp)) {
+                lv_group_set_editing(grp, false);
+            } else {
+                s_stack.pop();
+                if (s_stack.size() == 1)
+                    lv_indev_set_group(s_enc_indev, s_menu_group);
+            }
+            break;
+        }
+
+        case KeyEvent::BUTTON_AUX_SHORT:
+            if (s_active_mode != ActiveMode::NONE) {
+                unsigned long now = (unsigned long)app_millis();
+                if (s_fn_pending && (now - s_fn_last_press_t) < FN_DOUBLE_MS) {
+                    s_fn_pending = false;
+                    enter_encoder_mode(s_encoder_mode == EncoderMode::SCROLL
+                        ? EncoderMode::WPM : EncoderMode::SCROLL);
+                } else {
+                    s_fn_pending = true;
+                    s_fn_last_press_t = now;
+                }
+            }
+            break;
+        case KeyEvent::BUTTON_AUX_LONG:
+            s_stack.pop_all();
+            lv_indev_set_group(s_enc_indev, s_menu_group);
+            break;
+
+        default:
+            break;
+    }
+}
+#endif // BOARD_POCKETWROOM
+
+// ── route(): single-threaded path used by simulator ──────────────────────
+#ifndef BOARD_POCKETWROOM
 static void route(KeyEvent ev)
 {
     reset_activity_timer();
@@ -1273,8 +1525,6 @@ static void route(KeyEvent ev)
             }
             break;
         case KeyEvent::BUTTON_ENCODER_LONG: {
-            // If the active encoder group is in edit mode (e.g. editing a
-            // spinbox value), leave edit mode instead of popping the screen.
             lv_group_t* grp = lv_indev_get_group(s_enc_indev);
             if (grp && lv_group_get_editing(grp)) {
                 lv_group_set_editing(grp, false);
@@ -1290,12 +1540,10 @@ static void route(KeyEvent ev)
             if (s_active_mode != ActiveMode::NONE) {
                 unsigned long now = (unsigned long)app_millis();
                 if (s_fn_pending && (now - s_fn_last_press_t) < FN_DOUBLE_MS) {
-                    // Double press: toggle scroll mode
                     s_fn_pending = false;
                     enter_encoder_mode(s_encoder_mode == EncoderMode::SCROLL
                         ? EncoderMode::WPM : EncoderMode::SCROLL);
                 } else {
-                    // First press — wait for possible second press
                     s_fn_pending = true;
                     s_fn_last_press_t = now;
                 }
@@ -1339,7 +1587,6 @@ static void route(KeyEvent ev)
         case KeyEvent::PADDLE_DAH_DOWN: {
             bool phys_dit = (ev == KeyEvent::PADDLE_DIT_DOWN);
             if (s_settings.ext_key_iambic) {
-                // Iambic: apply swap
                 bool is_dit = s_settings.ext_key_swap ? !phys_dit : phys_dit;
                 if (cw_mode_active()) {
                     if (is_dit) s_paddle->setDotPushed(true);
@@ -1348,9 +1595,6 @@ static void route(KeyEvent ev)
                 if (s_active_mode == ActiveMode::ECHO)
                     s_trainer->tame_echo_timeout();
             } else {
-                // Straight mode: bridge to StraightKeyer via polling state.
-                // On pocketwroom StraightKeyer reads GPIO directly; this
-                // only matters for simulator/MIDI event sources.
                 s_straight_key_state = true;
             }
             break;
@@ -1382,6 +1626,57 @@ static void route(KeyEvent ev)
             break;
     }
 }
+#endif // !BOARD_POCKETWROOM
+
+// ── CW task infrastructure (pocketwroom only) ───────────────────────────
+#ifdef BOARD_POCKETWROOM
+// Decoder callback for CW task context — enqueues decoded symbols for the
+// UI task instead of touching LVGL directly.
+static void on_letter_decoded_cw(const std::string& letter)
+{
+    DecodedSymbol sym;
+    strncpy(sym.text, letter.c_str(), sizeof(sym.text) - 1);
+    sym.text[sizeof(sym.text) - 1] = '\0';
+    xQueueSend(s_decoded_symbol_queue, &sym, 0);
+}
+
+// CW task body — runs at priority 10 on Core 1, ~1 kHz tick rate.
+// Sole consumer of PocketKeyInput event queue.  Forwards non-CW events
+// to s_ui_event_queue for the Arduino loop task.
+static void cw_task_body(void* /*arg*/)
+{
+    while (true) {
+        KeyEvent ev;
+        // Block up to 1 ms — gives ~1 kHz tick rate when idle
+        if (s_keys->wait(ev, 1)) {
+            switch (ev) {
+            case KeyEvent::TOUCH_LEFT_DOWN:
+            case KeyEvent::TOUCH_LEFT_UP:
+            case KeyEvent::TOUCH_RIGHT_DOWN:
+            case KeyEvent::TOUCH_RIGHT_UP:
+            case KeyEvent::PADDLE_DIT_DOWN:
+            case KeyEvent::PADDLE_DIT_UP:
+            case KeyEvent::PADDLE_DAH_DOWN:
+            case KeyEvent::PADDLE_DAH_UP:
+            case KeyEvent::STRAIGHT_DOWN:
+            case KeyEvent::STRAIGHT_UP:
+                route_cw(ev);
+                break;
+            default:
+                xQueueSend(s_ui_event_queue, &ev, 0);
+                break;
+            }
+        }
+
+        if (s_cw_engine_active) {
+            s_paddle->tick();
+            s_keyer->tick();
+            if (s_straight_keyer) s_straight_keyer->decode();
+            s_decoder->tick();
+        }
+    }
+}
+#endif // BOARD_POCKETWROOM
 
 // ── Shared CW engine + trainer + LVGL init ────────────────────────────────
 // Call after s_audio and s_keys are assigned.
@@ -1391,7 +1686,11 @@ static void app_ui_init(uint32_t rng_seed)
     unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
     s_rng.seed(rng_seed);
     s_gen     = new TextGenerators(s_rng);
+#ifdef BOARD_POCKETWROOM
+    s_decoder = new MorseDecoder(dit_ms * 2, on_letter_decoded_cw, app_millis);
+#else
     s_decoder = new MorseDecoder(dit_ms * 2, on_letter_decoded, app_millis);
+#endif
     s_keyer   = new IambicKeyer(dit_ms, on_play_state, app_millis, s_settings.mode_a);
     s_paddle  = new PaddleCtl(/*debounce_ms=*/2, on_lever_state, app_millis);
     if (s_read_straight_key)
@@ -1486,6 +1785,15 @@ static void app_ui_init(uint32_t rng_seed)
     if (s_settings.quick_start && s_settings.last_mode <= 3) {
         push_mode_screen(s_settings.last_mode);
     }
+
+#ifdef BOARD_POCKETWROOM
+    // Create cross-task queues and launch the dedicated CW task.
+    // Must be last — CW task immediately starts consuming PocketKeyInput.
+    s_ui_event_queue      = xQueueCreate(32, sizeof(KeyEvent));
+    s_decoded_symbol_queue = xQueueCreate(16, sizeof(DecodedSymbol));
+    xTaskCreatePinnedToCore(cw_task_body, "cw_engine",
+                            4096, nullptr, 10, &s_cw_task_handle, 1);
+#endif
 }
 
 // ── CW engine + LVGL tick dispatch ────────────────────────────────────────
@@ -1525,6 +1833,23 @@ static void app_ui_tick()
         // Single press while in scroll mode is ignored
     }
 
+#ifdef BOARD_POCKETWROOM
+    // ── Drain decoded symbols from CW task ──────────────────────────────
+    {
+        DecodedSymbol sym;
+        while (xQueueReceive(s_decoded_symbol_queue, &sym, 0) == pdTRUE) {
+            on_letter_decoded(std::string(sym.text));
+        }
+    }
+    // ── Drain echo-tame flag from CW task ───────────────────────────────
+    if (s_cw_tame_echo) {
+        s_cw_tame_echo = false;
+        if (s_active_mode == ActiveMode::ECHO) s_trainer->tame_echo_timeout();
+    }
+    // ── Read element-end timestamp for word-space detection ──────────────
+    s_keyer_last_element_end_t = s_cw_last_element_end_t;
+#else
+    // ── Simulator: tick CW engine directly (single-threaded) ────────────
     if (s_active_mode == ActiveMode::KEYER ||
         s_active_mode == ActiveMode::ECHO ||
         s_active_mode == ActiveMode::CHATBOT) {
@@ -1533,6 +1858,7 @@ static void app_ui_tick()
         if (s_straight_keyer) s_straight_keyer->decode();
         s_decoder->tick();
     }
+#endif
     // Word-space: 7 dit after the last element ended (standard CW word space).
     // Measuring from element end (not character decode) ensures the timer can't
     // fire during the playback of a longer next character (e.g. a dah).

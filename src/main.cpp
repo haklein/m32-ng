@@ -318,10 +318,14 @@ void setup()
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────
+// CW task consumes PocketKeyInput queue directly and forwards non-CW events
+// (encoder, buttons) to s_ui_event_queue.  UI loop drains that queue.
 void loop()
 {
     KeyEvent ev;
-    while (s_keys->poll(ev)) route(ev);
+    while (xQueueReceive(s_ui_event_queue, &ev, 0) == pdTRUE) {
+        route_ui(ev);
+    }
     app_ui_tick();
     delay(1);
 }
