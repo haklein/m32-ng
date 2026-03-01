@@ -88,11 +88,32 @@ void MorseTrainer::tame_echo_timeout()
 void MorseTrainer::symbol_received(const std::string& symbol)
 {
     last_keyer_received_ = millis_cb_();
-    if (symbol == "<err>") {
-        // <HH> removes the last word (back to previous space, or clears all)
+
+    // Detect delete signals: <err> (7+ dits = <HH>), * (6 dits or other
+    // unknown CW), or EEEE (4 consecutive separate dits — common on-air
+    // correction signal).
+    bool is_delete = (symbol == "<err>" || symbol == "*");
+
+    if (!is_delete && symbol == "e") {
+        ++consecutive_e_;
+        if (consecutive_e_ >= 4) {
+            // Remove the 3 previously appended 'e's
+            if (received_phrase_.size() >= 3)
+                received_phrase_.erase(received_phrase_.size() - 3);
+            else
+                received_phrase_.clear();
+            is_delete = true;
+        }
+    } else if (!is_delete) {
+        consecutive_e_ = 0;
+    }
+
+    if (is_delete) {
+        consecutive_e_ = 0;
+        // Remove last word (back to previous space, or clear all)
         auto pos = received_phrase_.rfind(' ');
         if (pos != std::string::npos)
-            received_phrase_.erase(pos);   // keep up to (not including) last space
+            received_phrase_.erase(pos);
         else
             received_phrase_.clear();
     } else {
@@ -280,5 +301,6 @@ void MorseTrainer::advance_player()
         current_echo_state_   = EchoState::Receiving;
         last_keyer_received_  = now;
         received_phrase_.clear();
+        consecutive_e_ = 0;
     }
 }

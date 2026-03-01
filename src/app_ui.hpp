@@ -135,6 +135,7 @@ static lv_obj_t*   s_echo_target_lbl = nullptr;
 static lv_obj_t*   s_echo_rcvd_lbl   = nullptr;
 static lv_obj_t*   s_echo_result_lbl = nullptr;
 static std::string s_echo_typed;
+static uint8_t     s_echo_consecutive_e = 0;  // EEEE delete detection (display side)
 static std::string s_pending_gen_phrase;
 
 // ── Chatbot widgets (set/cleared with chatbot screen) ─────────────────────
@@ -322,8 +323,23 @@ static void on_letter_decoded(const std::string& letter)
     } else if (s_active_mode == ActiveMode::ECHO) {
         s_trainer->symbol_received(letter);
         if (s_echo_rcvd_lbl) {
-            if (letter == "<err>") {
-                // <HH> removes the last word (back to previous space)
+            // Detect delete signals: <err>, *, or 4+ consecutive 'e' (EEEE)
+            bool is_delete = (letter == "<err>" || letter == "*");
+            if (!is_delete && letter == "e") {
+                ++s_echo_consecutive_e;
+                if (s_echo_consecutive_e >= 4) {
+                    // Remove the 3 previously appended 'e's
+                    if (s_echo_typed.size() >= 3)
+                        s_echo_typed.erase(s_echo_typed.size() - 3);
+                    else
+                        s_echo_typed.clear();
+                    is_delete = true;
+                }
+            } else if (!is_delete) {
+                s_echo_consecutive_e = 0;
+            }
+            if (is_delete) {
+                s_echo_consecutive_e = 0;
                 auto pos = s_echo_typed.rfind(' ');
                 if (pos != std::string::npos)
                     s_echo_typed.erase(pos);
@@ -1407,6 +1423,7 @@ static void app_ui_init(uint32_t rng_seed)
             // Echo: reset for new round; hide target until user echoes it back
             if (s_echo_target_lbl) {
                 s_echo_typed.clear();
+                s_echo_consecutive_e = 0;
                 if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
                 if (s_echo_result_lbl) lv_label_set_text(s_echo_result_lbl, "");
                 lv_label_set_text(s_echo_target_lbl, "?");
@@ -1423,6 +1440,7 @@ static void app_ui_init(uint32_t rng_seed)
             lv_label_set_text(s_echo_target_lbl, phrase.c_str());
         // Clear received display so the next round starts clean
         s_echo_typed.clear();
+        s_echo_consecutive_e = 0;
         if (s_echo_rcvd_lbl) lv_label_set_text(s_echo_rcvd_lbl, "");
         if (s_echo_result_lbl) {
             lv_label_set_text(s_echo_result_lbl, success ? "OK" : "ERR");
@@ -1436,6 +1454,7 @@ static void app_ui_init(uint32_t rng_seed)
         // Max repeats exhausted — show correct phrase and "MISS"
         if (s_echo_target_lbl) lv_label_set_text(s_echo_target_lbl, phrase.c_str());
         s_echo_typed.clear();
+        s_echo_consecutive_e = 0;
         if (s_echo_rcvd_lbl)   lv_label_set_text(s_echo_rcvd_lbl, "");
         if (s_echo_result_lbl) {
             lv_label_set_text(s_echo_result_lbl, "MISS");

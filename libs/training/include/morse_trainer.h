@@ -111,6 +111,8 @@ private:
     std::string phrase_morse_;   // expanded as ".- -... " etc.
     std::string phrase_plain_;   // plain text, used for echo comparison
 
+    uint8_t consecutive_e_ = 0; // tracks consecutive 'e' for EEEE delete detection
+
     uint32_t last_keyer_received_     = 0;
     uint32_t last_player_state_change_ = 0;
     uint32_t last_echo_state_change_  = 0;
