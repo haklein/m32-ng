@@ -1,0 +1,115 @@
+name: Build & Deploy Firmware
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build pocketwroom firmware
+        run: pio run -e pocketwroom
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Collect firmware binaries as downloadable artifact ──────────────
+      - name: Collect firmware binaries
+        run: |
+          mkdir -p firmware
+          cp .pio/build/pocketwroom/bootloader.bin  firmware/
+          cp .pio/build/pocketwroom/partitions.bin   firmware/
+          cp .pio/build/pocketwroom/firmware.bin      firmware/
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 \
+                      -name boot_app0.bin -path '*/partitions/*' | head -1)
+          cp "$BOOT_APP0" firmware/
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: m32-ng-firmware-${{ steps.version.outputs.version }}
+          path: firmware/
+
+      # ── Prepare GitHub Pages site with ESP Web Tools installer ─────────
+      - name: Build web installer
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p site/firmware
+          cp firmware/* site/firmware/
+
+          # manifest.json (ESP Web Tools)
+          cat > site/firmware/manifest.json << MANIFEST
+          {
+            "name": "Morserino-32 NG",
+            "version": "${{ steps.version.outputs.version }}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "bootloader.bin",  "offset": 0 },
+                  { "path": "partitions.bin",  "offset": 32768 },
+                  { "path": "boot_app0.bin",   "offset": 57344 },
+                  { "path": "firmware.bin",    "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          MANIFEST
+
+          # index.html (web installer page)
+          cp .github/web-installer/index.html site/index.html
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
