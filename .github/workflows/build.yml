@@ -168,6 +168,7 @@ jobs:
           # ── Copy static installer page ─────────────────────────────────
           cd ..
           cp .github/web-installer/index.html _site/index.html
+          touch _site/.nojekyll
 
           # ── Commit and push ────────────────────────────────────────────
           cd _site
