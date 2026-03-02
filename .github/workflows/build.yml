@@ -9,19 +9,19 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: pages-deploy
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags for version detection
 
       - uses: actions/cache@v4
         with:
@@ -43,11 +43,22 @@ jobs:
       - name: Determine version
         id: version
         run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(git log -1 --format=%cI)
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF#refs/tags/}"
+            VER="${TAG#v}"
+            echo "version=$VER"   >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+            echo "dir=$TAG"       >> "$GITHUB_OUTPUT"
           else
-            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            VER="dev-$COMMIT"
+            echo "version=$VER"   >> "$GITHUB_OUTPUT"
+            echo "tag="           >> "$GITHUB_OUTPUT"
+            echo "dir=dev-$COMMIT" >> "$GITHUB_OUTPUT"
           fi
+          echo "commit=$COMMIT"   >> "$GITHUB_OUTPUT"
+          echo "date=$DATE"       >> "$GITHUB_OUTPUT"
 
       # ── Collect firmware binaries as downloadable artifact ──────────────
       - name: Collect firmware binaries
@@ -66,18 +77,34 @@ jobs:
           name: m32-ng-firmware-${{ steps.version.outputs.version }}
           path: firmware/
 
-      # ── Prepare GitHub Pages site with ESP Web Tools installer ─────────
-      - name: Build web installer
+      # ── Deploy to GitHub Pages (not on PRs) ────────────────────────────
+      - name: Deploy to gh-pages
         if: github.event_name != 'pull_request'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG:     ${{ steps.version.outputs.tag }}
+          DIR:     ${{ steps.version.outputs.dir }}
+          COMMIT:  ${{ steps.version.outputs.commit }}
+          DATE:    ${{ steps.version.outputs.date }}
         run: |
-          mkdir -p site/firmware
-          cp firmware/* site/firmware/
+          set -e
 
-          # manifest.json (ESP Web Tools)
-          cat > site/firmware/manifest.json << MANIFEST
+          # ── Clone gh-pages (or create it) ──────────────────────────────
+          git clone --branch gh-pages --single-branch \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            _site 2>/dev/null || {
+            mkdir _site && cd _site && git init && git checkout -b gh-pages && cd ..
+          }
+
+          # ── Copy firmware into versioned directory ─────────────────────
+          mkdir -p "_site/firmware/$DIR"
+          cp firmware/* "_site/firmware/$DIR/"
+
+          # ── Per-version manifest.json ──────────────────────────────────
+          cat > "_site/firmware/$DIR/manifest.json" << EOF
           {
             "name": "Morserino-32 NG",
-            "version": "${{ steps.version.outputs.version }}",
+            "version": "$VERSION",
             "new_install_prompt_erase": true,
             "builds": [
               {
@@ -91,25 +118,63 @@ jobs:
               }
             ]
           }
-          MANIFEST
+          EOF
 
-          # index.html (web installer page)
-          cp .github/web-installer/index.html site/index.html
+          # ── Update versions.json ───────────────────────────────────────
+          cd _site
+          python3 << 'PYEOF'
+          import json, os
 
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
+          VERSIONS_FILE = "versions.json"
+          MAX_DEV_BUILDS = 10
 
-  deploy:
-    if: github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          versions = []
+          if os.path.exists(VERSIONS_FILE):
+              with open(VERSIONS_FILE) as f:
+                  versions = json.load(f).get("versions", [])
+
+          # Remove existing entry for this version (re-build of same commit)
+          ver = os.environ["VERSION"]
+          versions = [v for v in versions if v["version"] != ver]
+
+          # Add new entry
+          entry = {
+              "version": ver,
+              "tag": os.environ["TAG"] or None,
+              "date": os.environ["DATE"],
+              "commit": os.environ["COMMIT"],
+              "dir": "firmware/" + os.environ["DIR"],
+          }
+          versions.append(entry)
+
+          # Prune old dev builds (keep last MAX_DEV_BUILDS)
+          tagged   = [v for v in versions if v["tag"]]
+          untagged = [v for v in versions if not v["tag"]]
+          untagged.sort(key=lambda v: v["date"], reverse=True)
+
+          # Remove pruned dev build directories
+          for old in untagged[MAX_DEV_BUILDS:]:
+              d = old["dir"]
+              if os.path.isdir(d):
+                  import shutil
+                  shutil.rmtree(d)
+
+          untagged = untagged[:MAX_DEV_BUILDS]
+          versions = tagged + untagged
+
+          with open(VERSIONS_FILE, "w") as f:
+              json.dump({"versions": versions}, f, indent=2)
+          PYEOF
+
+          # ── Copy static installer page ─────────────────────────────────
+          cd ..
+          cp .github/web-installer/index.html _site/index.html
+
+          # ── Commit and push ────────────────────────────────────────────
+          cd _site
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "No changes to deploy" && exit 0
+          git commit -m "Deploy firmware $VERSION ($COMMIT)"
+          git push origin gh-pages

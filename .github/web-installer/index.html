@@ -5,52 +5,61 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Morserino-32 NG &mdash; Web Installer</title>
   <style>
-    :root { --accent: #1a73e8; }
+    :root { --accent: #1a73e8; --bg: #fafafa; --card: #fff; --border: #ddd; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                    Helvetica, Arial, sans-serif;
-      max-width: 640px;
-      margin: 0 auto;
-      padding: 2rem 1rem;
-      color: #222;
-      background: #fafafa;
+      max-width: 640px; margin: 0 auto; padding: 2rem 1rem;
+      color: #222; background: var(--bg);
     }
-    h1 { font-size: 1.6rem; margin-bottom: 0.5rem; }
-    .subtitle { color: #666; margin-bottom: 2rem; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #666; margin-bottom: 1.5rem; }
+
+    /* Cards */
     .card {
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 1.5rem; margin-bottom: 1.25rem;
     }
     .card h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
-    .card p  { color: #555; line-height: 1.5; margin-bottom: 1rem; }
+    .card p  { color: #555; line-height: 1.5; margin-bottom: 0.75rem; }
     .card ol { color: #555; line-height: 1.8; padding-left: 1.5rem; margin-bottom: 1rem; }
+
+    /* Version selector */
+    .version-select {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 1rem; flex-wrap: wrap;
+    }
+    .version-select label { font-weight: 600; white-space: nowrap; }
+    .version-select select {
+      flex: 1; min-width: 200px; padding: 0.5rem; font-size: 0.95rem;
+      border: 1px solid var(--border); border-radius: 4px; background: #fff;
+    }
+    .version-meta {
+      font-size: 0.85rem; color: #888; margin-bottom: 1rem;
+    }
+    .version-meta code {
+      background: #f0f0f0; padding: 0.1rem 0.35rem; border-radius: 3px;
+      font-size: 0.82rem;
+    }
+
+    /* Install button */
     esp-web-install-button { display: block; text-align: center; }
     esp-web-install-button button {
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      padding: 0.75rem 2rem;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 6px; padding: 0.75rem 2rem; font-size: 1rem;
+      cursor: pointer; transition: background 0.2s;
     }
     esp-web-install-button button:hover { background: #1557b0; }
     .unsupported {
-      color: #b00;
-      text-align: center;
-      padding: 1rem;
-      font-style: italic;
+      color: #b00; text-align: center; padding: 1rem; font-style: italic;
     }
+
+    /* Loading / error */
+    #loading { text-align: center; color: #888; padding: 2rem 0; }
+
     footer {
-      text-align: center;
-      color: #999;
-      font-size: 0.85rem;
-      margin-top: 2rem;
+      text-align: center; color: #999; font-size: 0.85rem; margin-top: 2rem;
     }
     footer a { color: #666; }
   </style>
@@ -59,30 +68,40 @@
   <h1>Morserino-32 NG</h1>
   <p class="subtitle">Web Firmware Installer</p>
 
-  <div class="card">
-    <h2>Install Firmware</h2>
-    <p>Flash the latest Morserino-32 NG firmware directly from your browser.
-       No drivers or tools needed &mdash; just a USB cable and Chrome or Edge.</p>
-    <ol>
-      <li>Connect your Morserino-32 NG via USB</li>
-      <li>Click <strong>Install Firmware</strong> below</li>
-      <li>Select the serial port when prompted</li>
-    </ol>
-    <esp-web-install-button manifest="firmware/manifest.json">
-      <button slot="activate">Install Firmware</button>
-      <span slot="unsupported">
-        <p class="unsupported">
-          Your browser does not support Web Serial.<br>
-          Please use <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong>
-          on a desktop computer.
-        </p>
-      </span>
-      <span slot="not-allowed">
-        <p class="unsupported">
-          Web Serial requires a secure (HTTPS) connection.
-        </p>
-      </span>
-    </esp-web-install-button>
+  <div id="loading">Loading available firmware versions&hellip;</div>
+
+  <div id="app" style="display:none">
+    <div class="card">
+      <h2>Select Firmware</h2>
+      <div class="version-select">
+        <label for="ver">Version:</label>
+        <select id="ver"></select>
+      </div>
+      <div id="meta" class="version-meta"></div>
+    </div>
+
+    <div class="card">
+      <h2>Install</h2>
+      <ol>
+        <li>Connect your Morserino-32 NG via USB</li>
+        <li>Select the firmware version above</li>
+        <li>Click <strong>Install Firmware</strong></li>
+      </ol>
+      <esp-web-install-button id="install-btn">
+        <button slot="activate">Install Firmware</button>
+        <span slot="unsupported">
+          <p class="unsupported">
+            Your browser does not support Web Serial.<br>
+            Use <strong>Chrome</strong> or <strong>Edge</strong> on desktop.
+          </p>
+        </span>
+        <span slot="not-allowed">
+          <p class="unsupported">
+            Web Serial requires a secure (HTTPS) connection.
+          </p>
+        </span>
+      </esp-web-install-button>
+    </div>
   </div>
 
   <footer>
@@ -91,6 +110,112 @@
 
   <script type="module"
     src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module">
+  </script>
+
+  <script>
+    // ── Semver comparison (descending) ─────────────────────────────────
+    function semverCmp(a, b) {
+      const pa = a.split('.').map(Number);
+      const pb = b.split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        const da = pa[i] || 0, db = pb[i] || 0;
+        if (da !== db) return db - da;  // descending
+      }
+      return 0;
+    }
+
+    // ── Format date for display ────────────────────────────────────────
+    function fmtDate(iso) {
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric'
+      });
+    }
+
+    // ── Load versions and build UI ─────────────────────────────────────
+    async function init() {
+      const loadEl = document.getElementById('loading');
+      const appEl  = document.getElementById('app');
+      const selEl  = document.getElementById('ver');
+      const metaEl = document.getElementById('meta');
+      const btnEl  = document.getElementById('install-btn');
+
+      let data;
+      try {
+        const resp = await fetch('versions.json');
+        if (!resp.ok) throw new Error(resp.statusText);
+        data = await resp.json();
+      } catch (e) {
+        loadEl.textContent = 'No firmware versions available yet.';
+        return;
+      }
+
+      const versions = data.versions || [];
+      if (versions.length === 0) {
+        loadEl.textContent = 'No firmware versions available yet.';
+        return;
+      }
+
+      // Split into tagged (releases) and dev builds
+      const tagged   = versions.filter(v => v.tag);
+      const untagged = versions.filter(v => !v.tag);
+
+      // Sort: tagged by semver descending, untagged by date descending
+      tagged.sort((a, b) => semverCmp(a.version, b.version));
+      untagged.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      // Build <select> options
+      if (tagged.length > 0) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Releases';
+        for (const v of tagged) {
+          const opt = document.createElement('option');
+          opt.value = v.dir;
+          opt.textContent = v.tag + '  (' + fmtDate(v.date) + ')';
+          opt.dataset.commit = v.commit;
+          opt.dataset.date   = v.date;
+          opt.dataset.tag    = v.tag || '';
+          opt.dataset.version = v.version;
+          grp.appendChild(opt);
+        }
+        selEl.appendChild(grp);
+      }
+      if (untagged.length > 0) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Development Builds';
+        for (const v of untagged) {
+          const opt = document.createElement('option');
+          opt.value = v.dir;
+          opt.textContent = v.commit + '  (' + fmtDate(v.date) + ')';
+          opt.dataset.commit = v.commit;
+          opt.dataset.date   = v.date;
+          opt.dataset.tag    = '';
+          opt.dataset.version = v.version;
+          grp.appendChild(opt);
+        }
+        selEl.appendChild(grp);
+      }
+
+      // Update manifest path and metadata on selection change
+      function onSelect() {
+        const opt = selEl.selectedOptions[0];
+        if (!opt) return;
+        const dir = opt.value;
+        btnEl.setAttribute('manifest', dir + '/manifest.json');
+        const tag = opt.dataset.tag;
+        const parts = [fmtDate(opt.dataset.date)];
+        parts.push('commit <code>' + opt.dataset.commit + '</code>');
+        if (tag) parts.unshift('<strong>' + tag + '</strong>');
+        metaEl.innerHTML = parts.join(' &middot; ');
+      }
+      selEl.addEventListener('change', onSelect);
+      onSelect();
+
+      loadEl.style.display = 'none';
+      appEl.style.display = 'block';
+    }
+
+    init();
   </script>
 </body>
 </html>
