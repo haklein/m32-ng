@@ -30,9 +30,10 @@ unsigned long SymbolPlayer::getPlayStateDuration()
     case PLAY_STATE_DASH_ON:
         return duration_unit * 3;
     case PLAY_STATE_DOT_ON:
+        return duration_unit;
     case PLAY_STATE_DOT_OFF:
     case PLAY_STATE_DASH_OFF:
-        return duration_unit;
+        return duration_unit + release_comp_ms;
     case PLAY_STATE_STOPPED:
     case PLAY_STATE_UNSET:
         return 0;
@@ -93,4 +94,23 @@ void SymbolPlayer::setPlayState(PlayState play_state)
 void SymbolPlayer::setDurationUnit(unsigned long duration_unit)
 {
     this->duration_unit = duration_unit;
+}
+
+void SymbolPlayer::setReleaseCompensation(unsigned long ms)
+{
+    this->release_comp_ms = ms;
+}
+
+bool SymbolPlayer::isPastElementThreshold(uint8_t dit_pct, uint8_t dah_pct)
+{
+    unsigned long dur;
+    uint8_t pct;
+    switch (play_state) {
+    case PLAY_STATE_DOT_ON:  dur = duration_unit;     pct = dit_pct; break;
+    case PLAY_STATE_DASH_ON: dur = duration_unit * 3;  pct = dah_pct; break;
+    default: return true;   // not in an element — always accept
+    }
+    if (pct == 0 || dur == 0) return true;
+    unsigned long threshold = (dur * pct) / 100;
+    return (millis_cb() - last_state_change) >= threshold;
 }

@@ -67,6 +67,7 @@ void MorseTrainer::set_new_phrase_fn(new_phrase_fn cb)   { phrase_cb_ = std::mov
 void MorseTrainer::set_max_echo_repeats(uint8_t n)       { max_echo_repeats_ = n; }
 void MorseTrainer::set_state(TrainerState s)             { current_state_ = s; }
 void MorseTrainer::set_adaptive_speed(bool a)            { adaptive_speed_ = a; }
+void MorseTrainer::set_release_compensation(int ms)      { release_comp_ms_ = ms; }
 
 void MorseTrainer::set_idle()
 {
@@ -214,7 +215,7 @@ void MorseTrainer::tick()
 
     case PlayerState::InterSymbol:
         if (player_position_ < phrase_morse_.size() + 1) {
-            if (now > last_player_state_change_ + static_cast<uint32_t>(dot_delay_ms_)) {
+            if (now > last_player_state_change_ + static_cast<uint32_t>(dot_delay_ms_ + release_comp_ms_)) {
                 ++player_position_;
                 char ch = (player_position_ <= phrase_morse_.size())
                           ? phrase_morse_[player_position_ - 1] : '\0';

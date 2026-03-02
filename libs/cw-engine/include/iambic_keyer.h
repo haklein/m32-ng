@@ -39,6 +39,8 @@ public:
     void setSpeedWPM(unsigned long speed_wpm);
     void setModeA(bool mode_a);
     bool getModeA();
+    void setReleaseCompensation(unsigned long ms);
+    void setCurtisBThreshold(uint8_t dit_pct, uint8_t dah_pct);
 
     KeyerState nextKeyerState();
     bool isPlayStateExpired();
@@ -52,4 +54,6 @@ private:
     LeverState prev_lever_state = LEVER_UNSET;
     bool lever_upgrade = false;
     bool mode_a = false;
+    uint8_t curtisb_dit_pct_ = 0;  // 0 = original Curtis B
+    uint8_t curtisb_dah_pct_ = 0;
 };

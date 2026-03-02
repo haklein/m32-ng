@@ -19,8 +19,8 @@ public:
     void set_string(const char* ns, const char* key,
                     const char* val) override;
 
-    bool get_blob(const char* ns, const char* key,
-                  void* buf, size_t len) override;
+    size_t get_blob(const char* ns, const char* key,
+                    void* buf, size_t len) override;
     void set_blob(const char* ns, const char* key,
                   const void* buf, size_t len) override;
 

@@ -280,8 +280,7 @@ void setup()
     Log.verboseln("Audio init");
     s_audio = new PocketAudioOutput();
     s_audio->begin();
-    s_audio->set_volume(s_settings.volume);
-    s_audio->set_adsr(0.007f, 0.0f, 1.0f, 0.007f);
+    // Volume and ADSR set via apply_settings() after engine init.
 
     // ── Touch calibration ─────────────────────────────────────────────────
     auto sample_idle = [](int pin) -> uint32_t {

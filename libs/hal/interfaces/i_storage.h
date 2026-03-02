@@ -26,9 +26,10 @@ public:
                             const char* val) = 0;
 
     // Binary blob — for serializing structs (e.g. AppSettings).
-    // Returns false / no-op by default; ESP32 implementation uses putBytes/getBytes.
-    virtual bool get_blob(const char* ns, const char* key,
-                          void* buf, size_t len) { (void)ns; (void)key; (void)buf; (void)len; return false; }
+    // Returns number of bytes actually read (0 = key not found).
+    // If the stored blob is shorter than len, reads what's available.
+    virtual size_t get_blob(const char* ns, const char* key,
+                            void* buf, size_t len) { (void)ns; (void)key; (void)buf; (void)len; return 0; }
     virtual void set_blob(const char* ns, const char* key,
                           const void* buf, size_t len) { (void)ns; (void)key; (void)buf; (void)len; }
 

@@ -45,16 +45,18 @@ void PocketStorage::set_string(const char* ns, const char* key,
     prefs_.end();
 }
 
-bool PocketStorage::get_blob(const char* ns, const char* key,
-                             void* buf, size_t len)
+size_t PocketStorage::get_blob(const char* ns, const char* key,
+                               void* buf, size_t len)
 {
-    if (!prefs_.begin(ns, /*readOnly=*/true)) return false;
-    bool ok = false;
-    if (prefs_.isKey(key) && prefs_.getBytesLength(key) == len) {
-        ok = (prefs_.getBytes(key, buf, len) == len);
+    if (!prefs_.begin(ns, /*readOnly=*/true)) return 0;
+    size_t bytes_read = 0;
+    if (prefs_.isKey(key)) {
+        size_t stored = prefs_.getBytesLength(key);
+        size_t to_read = stored < len ? stored : len;
+        bytes_read = prefs_.getBytes(key, buf, to_read);
     }
     prefs_.end();
-    return ok;
+    return bytes_read;
 }
 
 void PocketStorage::set_blob(const char* ns, const char* key,

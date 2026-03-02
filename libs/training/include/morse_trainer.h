@@ -64,6 +64,7 @@ public:
 
     // 0 = unlimited repeats; N = advance after N failures without success.
     void set_max_echo_repeats(uint8_t n);
+    void set_release_compensation(int ms);
 
     // Feed a decoded letter from MorseDecoder into the echo trainer.
     void symbol_received(const std::string& symbol);
@@ -84,6 +85,7 @@ private:
     int dash_delay_ms_ = (dot_delay_ms_ * 3 * 55) / 50;
     int char_gap_ms_   = dot_delay_ms_ * 2;  // InterCharacter delay (stretched for Farnsworth)
     int farnsworth_wpm_ = 0;                  // 0 = off
+    int release_comp_ms_ = 0;                 // ADSR release compensation
 
     static constexpr int SUCCESS_DELAY_MS            = 1000;
     static constexpr int ERROR_DELAY_MS              = 1000;

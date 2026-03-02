@@ -4,6 +4,7 @@
 // millis is injected via constructor; no Arduino dependency.
 
 #include "common.h"
+#include <cstdint>
 
 enum PlayState
 {
@@ -31,6 +32,11 @@ public:
     void playDash();
     void tick();
     void setDurationUnit(unsigned long duration_unit);
+    void setReleaseCompensation(unsigned long ms);
+
+    // Enhanced Curtis B: returns true if current element is past the given
+    // threshold percentage, or if not currently in an ON state.
+    bool isPastElementThreshold(uint8_t dit_pct, uint8_t dah_pct);
 
 protected:
     PlayState getPlayState();
@@ -46,4 +52,5 @@ private:
     PlayState play_state = PLAY_STATE_UNSET;
     unsigned long last_state_change = 0;
     unsigned long duration_unit;
+    unsigned long release_comp_ms = 0;
 };

@@ -34,7 +34,7 @@
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 10;
+    static constexpr uint8_t VERSION = 12;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -67,6 +67,11 @@ struct AppSettings {
     // VERSION 9
     bool     adaptive_speed = true; // adjust WPM on echo success/failure
     uint8_t  qso_max_words  = 0;   // 0=unlimited, else max words per QSO phrase
+    // VERSION 11
+    uint8_t  adsr_ms = 7;         // ADSR attack+release (ms), range 1-15
+    // VERSION 12
+    uint8_t  curtisb_dit_pct = 40; // Curtis B dit timing %, 0-100
+    uint8_t  curtisb_dah_pct = 40; // Curtis B dah timing %, 0-100
 };
 static AppSettings s_settings;
 
@@ -139,10 +144,14 @@ static void save_settings()
 static void load_settings()
 {
     if (!s_storage) return;
-    AppSettings tmp;
-    if (s_storage->get_blob("m32", "settings", &tmp, sizeof(tmp))
-        && tmp.version == AppSettings::VERSION) {
-        s_settings = tmp;
+    AppSettings tmp;   // default-initialized — new fields get their defaults
+    size_t n = s_storage->get_blob("m32", "settings", &tmp, sizeof(tmp));
+    if (n >= sizeof(tmp.version) && tmp.version <= AppSettings::VERSION) {
+        s_settings = tmp;  // old fields copied; new fields keep defaults
+        if (s_settings.version < AppSettings::VERSION) {
+            s_settings.version = AppSettings::VERSION;
+            save_settings();   // persist migrated settings
+        }
     }
 }
 
@@ -448,6 +457,12 @@ static void apply_settings()
         s_chatbot->set_qso_depth(depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
     }
     s_audio->set_volume(s_settings.volume);
+    float adsr_s = s_settings.adsr_ms / 1000.0f;
+    s_audio->set_adsr(adsr_s, 0.0f, 1.0f, adsr_s);
+    s_keyer->setReleaseCompensation((unsigned long)s_settings.adsr_ms);
+    s_keyer->setCurtisBThreshold(s_settings.curtisb_dit_pct,
+                                  s_settings.curtisb_dah_pct);
+    s_trainer->set_release_compensation(s_settings.adsr_ms);
     update_status_bar_info();
 }
 
@@ -922,6 +937,40 @@ static lv_obj_t* build_settings_screen()
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
+    // Curtis B DitT%
+    {
+        lv_obj_t* row = make_row("CurtisB DitT%");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 0, 100);
+        lv_spinbox_set_step(spn, 5);
+        lv_spinbox_set_digit_count(spn, 3);
+        lv_spinbox_set_value(spn, s_settings.curtisb_dit_pct);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.curtisb_dit_pct = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            apply_settings();
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // Curtis B DahT%
+    {
+        lv_obj_t* row = make_row("CurtisB DahT%");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 0, 100);
+        lv_spinbox_set_step(spn, 5);
+        lv_spinbox_set_digit_count(spn, 3);
+        lv_spinbox_set_value(spn, s_settings.curtisb_dah_pct);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.curtisb_dah_pct = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            apply_settings();
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
     // Frequency
     {
         lv_obj_t* row = make_row("Freq (Hz)");
@@ -950,6 +999,22 @@ static lv_obj_t* build_settings_screen()
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.volume = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             s_audio->set_volume(s_settings.volume);
+            save_settings();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // ADSR
+    {
+        lv_obj_t* row = make_row("ADSR (ms)");
+        lv_obj_t* spn = lv_spinbox_create(row);
+        lv_spinbox_set_range(spn, 1, 15);
+        lv_spinbox_set_digit_count(spn, 2);
+        lv_spinbox_set_value(spn, s_settings.adsr_ms);
+        lv_obj_set_width(spn, 100);
+        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_add_event_cb(spn, [](lv_event_t* e) {
+            s_settings.adsr_ms = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+            apply_settings();
             save_settings();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
     }
@@ -1801,6 +1866,9 @@ static void app_ui_init(uint32_t rng_seed)
             if (f) lv_obj_add_state(f, LV_STATE_FOCUS_KEY);
         },
         {});
+
+    // Propagate all loaded settings (ADSR, volume, WPM, etc.) to engines.
+    apply_settings();
 
     // Quick start: auto-jump into last CW mode
     if (s_settings.quick_start && s_settings.last_mode <= 3) {

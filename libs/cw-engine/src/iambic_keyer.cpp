@@ -11,7 +11,10 @@ void IambicKeyer::setLeverState(LeverState lever_state)
   //printf("**  Lever state: %s -> %s\n", lever_state_str[this->lever_state], lever_state_str[lever_state]);
   if (this->lever_state != lever_state && (lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT))
   {
-    lever_upgrade = true;
+    // Enhanced Curtis B: only accept squeeze if past threshold % of element
+    if (symbol_player.isPastElementThreshold(curtisb_dit_pct_, curtisb_dah_pct_)) {
+      lever_upgrade = true;
+    }
   }
   this->lever_state = lever_state;
 }
@@ -150,4 +153,15 @@ void IambicKeyer::setModeA(bool mode_a)
 bool IambicKeyer::getModeA()
 {
   return mode_a;
+}
+
+void IambicKeyer::setReleaseCompensation(unsigned long ms)
+{
+  symbol_player.setReleaseCompensation(ms);
+}
+
+void IambicKeyer::setCurtisBThreshold(uint8_t dit_pct, uint8_t dah_pct)
+{
+  curtisb_dit_pct_ = dit_pct;
+  curtisb_dah_pct_ = dah_pct;
 }
