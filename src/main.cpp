@@ -70,19 +70,22 @@ static void M32Pocket_hal_init()
 }
 
 // Initialises hardware, LVGL, and the LVGL display driver.
-static void display_init()
+// Call after load_settings() so screen_flip is already known — avoids a
+// double setRotation() that some panels don't handle cleanly.
+static void display_init(bool flip)
 {
     M32Pocket_hal_init();
-    Log.verboseln("Display init");
+    Log.verboseln("Display init (flip=%d)", flip);
 #ifdef BOARD_POCKETWROOM
     gfx.begin();
-    gfx.setRotation(3);
+    gfx.setRotation(flip ? 1 : 3);
 #endif
     lv_init();
     lv_tick_set_cb(tick_get_cb);
 
     s_lv_display = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
-    lv_display_set_rotation(s_lv_display, LV_DISPLAY_ROTATION_90);
+    lv_display_set_rotation(s_lv_display,
+        flip ? LV_DISPLAY_ROTATION_270 : LV_DISPLAY_ROTATION_90);
     lv_display_set_color_format(s_lv_display, LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(s_lv_display, my_disp_flush);
     lv_display_set_buffers(s_lv_display, lvBuffer, nullptr, lvBufferSize,
@@ -154,7 +157,7 @@ void setup()
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     Log.verboseln("M32 NG — Smoke Test Startup");
 
-    display_init();
+    display_init(false);
 
     status_label = lv_label_create(lv_screen_active());
     lv_label_set_text(status_label, "M32 Smoke Test\nReady.");
@@ -239,17 +242,14 @@ void setup()
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     Log.verboseln("M32 NG — Startup");
 
-    display_init();
-
-    // ── Settings persistence ─────────────────────────────────────────────
+    // ── Settings persistence (load BEFORE display so rotation is set once) ──
     s_storage = new PocketStorage();
     load_settings();
+    Log.verboseln("Settings: v=%d wpm=%d flip=%d",
+                  s_settings.version, s_settings.wpm, s_settings.screen_flip);
 
-    // ── Screen flip (apply before splash so user sees correct orientation)
-    if (s_settings.screen_flip) {
-        gfx.setRotation(1);
-        lv_display_set_rotation(s_lv_display, LV_DISPLAY_ROTATION_270);
-    }
+    display_init(s_settings.screen_flip);
+
     s_on_screen_flip = [](bool flip) {
         gfx.setRotation(flip ? 1 : 3);
         lv_display_set_rotation(s_lv_display,
@@ -336,7 +336,7 @@ void setup()
     Serial.begin(115200);
     delay(2000);
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
-    display_init();
+    display_init(false);
     lv_obj_t* lbl = lv_label_create(lv_screen_active());
     lv_label_set_text(lbl, "M32 NG\n(board not supported)");
     lv_obj_center(lbl);
