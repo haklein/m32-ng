@@ -25,7 +25,9 @@
 #include <key_input.h>      // PocketKeyInput, KeyEvent
 #include <storage_nvs.h>    // PocketStorage (NVS)
 #include <battery.h>        // PocketBattery
+#include <network_esp32.h>  // Esp32Network (WiFi HAL)
 #include <esp_sleep.h>      // deep sleep + GPIO wakeup
+#include <WiFi.h>           // MAC address for AP SSID
 #include <SPIFFS.h>         // sound effects filesystem
 #endif
 
@@ -309,6 +311,29 @@ void setup()
     s_battery.begin();
     s_read_battery_percent = []() -> uint8_t { return s_battery.percent(); };
     s_is_charging          = []() -> bool    { return s_battery.charging(); };
+
+    // ── WiFi HAL + AP SSID ────────────────────────────────────────────────
+    s_network = new Esp32Network();
+    {
+        uint8_t mac[6];
+        WiFi.macAddress(mac);
+        snprintf(s_ap_ssid, sizeof(s_ap_ssid), "Morserino-%02X%02X",
+                 mac[4], mac[5]);
+        Log.verboseln("AP SSID: %s", s_ap_ssid);
+    }
+    // Try connecting with saved credentials
+    {
+        char wifi_ssid[33] = {};
+        char wifi_pass[65] = {};
+        if (load_wifi_creds(wifi_ssid, sizeof(wifi_ssid),
+                            wifi_pass, sizeof(wifi_pass))) {
+            Log.noticeln("WiFi: connecting to '%s'", wifi_ssid);
+            lv_label_set_text(splash, "Connecting WiFi...");
+            lv_timer_handler();
+            bool ok = s_network->wifi_connect(wifi_ssid, wifi_pass, 8000);
+            Log.noticeln("WiFi: %s", ok ? "connected" : "failed");
+        }
+    }
 
     // ── CW engine + UI ────────────────────────────────────────────────────
     app_ui_init(esp_random());

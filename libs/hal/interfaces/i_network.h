@@ -3,6 +3,11 @@
 #include <cstdint>
 #include <cstddef>
 
+struct WifiNetwork {
+    char   ssid[33];   // null-terminated, max 32 chars
+    int8_t rssi;       // signal strength in dBm
+};
+
 enum class CwProto {
     ESP_NOW,  // low-latency local peer-to-peer
     UDP,      // IP UDP unicast
@@ -32,6 +37,10 @@ public:
 
     // Writes null-terminated IP string into buf.
     virtual void wifi_get_ip(char* buf, size_t len) = 0;
+
+    // Scan for visible networks.  Populates results[0..max_results-1].
+    // Returns count found (may be 0).  Blocks until scan completes.
+    virtual int wifi_scan(WifiNetwork* results, int max_results) = 0;
 
     // ── CW transport ──────────────────────────────────────────────────────────
 

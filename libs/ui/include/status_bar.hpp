@@ -21,6 +21,7 @@ public:
     void set_volume(int vol);
     void set_scroll();
     void set_battery(uint8_t percent, bool charging);
+    void set_wifi(bool connected, bool ap_mode = false);
 
     lv_obj_t* obj() const { return bar_; }
     lv_coord_t height() const { return height_; }
@@ -29,6 +30,7 @@ private:
     lv_obj_t*  bar_;
     lv_obj_t*  mode_label_;
     lv_obj_t*  wpm_label_;
+    lv_obj_t*  wifi_label_;
     lv_obj_t*  bat_label_;
     lv_coord_t height_;
 };

@@ -18,6 +18,7 @@
 #include "i_audio_output.h"
 #include "i_key_input.h"
 #include "i_storage.h"
+#include "i_network.h"
 #include "paddle_ctl.h"
 #include "iambic_keyer.h"
 #include "straight_keyer.h"
@@ -105,6 +106,7 @@ static ActiveMode s_active_mode = ActiveMode::NONE;
 static IAudioOutput* s_audio   = nullptr;
 static IKeyInput*    s_keys    = nullptr;
 static IStorage*     s_storage = nullptr;  // nullptr on simulator (no persistence)
+static INetwork*     s_network = nullptr;  // nullptr on simulator
 
 // ── Battery HAL callbacks (set by platform main.cpp) ─────────────────────
 static uint8_t (*s_read_battery_percent)() = nullptr;  // 0–100, or 255 if n/a
@@ -196,6 +198,37 @@ static CWTextField* s_chatbot_bot_tf         = nullptr;
 static CWTextField* s_chatbot_oper_tf        = nullptr;
 static lv_obj_t*    s_chatbot_state_lbl      = nullptr;
 
+// ── WiFi provisioning state ──────────────────────────────────────────────
+static char          s_ap_ssid[20]           = {};
+static lv_obj_t*     s_wifi_status_lbl       = nullptr;
+static volatile bool s_wifi_creds_ready      = false;
+static bool          s_wifi_portal_pending   = false;  // deferred portal start
+static char          s_pending_ssid[33]      = {};
+static char          s_pending_pass[65]      = {};
+#ifdef BOARD_POCKETWROOM
+#include "wifi_portal.h"
+#include "qr_canvas.h"
+static WifiPortal*   s_portal               = nullptr;
+#endif
+
+static void save_wifi_creds(const char* ssid, const char* pass)
+{
+    if (!s_storage) return;
+    s_storage->set_string("wifi", "ssid", ssid);
+    s_storage->set_string("wifi", "pass", pass);
+    s_storage->commit();
+}
+
+static bool load_wifi_creds(char* ssid_buf, size_t ssid_len,
+                            char* pass_buf, size_t pass_len)
+{
+    if (!s_storage) return false;
+    if (!s_storage->get_string("wifi", "ssid", ssid_buf, ssid_len))
+        return false;
+    s_storage->get_string("wifi", "pass", pass_buf, pass_len);
+    return ssid_buf[0] != '\0';
+}
+
 // ── Screen stack & LVGL encoder indev ─────────────────────────────────────
 static ScreenStack s_stack;
 static lv_indev_t* s_enc_indev        = nullptr;
@@ -204,6 +237,7 @@ static int         s_enc_press_frames = 0;
 static lv_group_t* s_menu_group     = nullptr;
 static lv_group_t* s_settings_group = nullptr;
 static lv_group_t* s_content_group  = nullptr;
+static lv_group_t* s_wifi_group     = nullptr;
 
 // ── Encoder adjust mode (FN button cycles: WPM / Volume / Scroll) ───────
 enum class EncoderMode { WPM, VOLUME, SCROLL };
@@ -326,6 +360,7 @@ static lv_obj_t* build_echo_screen();
 static lv_obj_t* build_chatbot_screen();
 static lv_obj_t* build_settings_screen();
 static lv_obj_t* build_content_screen();
+static lv_obj_t* build_wifi_screen();
 static void      apply_settings();
 static std::string content_phrase();
 static void      route(KeyEvent ev);
@@ -628,10 +663,27 @@ static void push_mode_screen(int idx)
         ns = build_content_screen();
         enter_cb = []() { lv_indev_set_group(s_enc_indev, s_content_group); };
         leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
-    } else {
+    } else if (idx == 5) {
         ns = build_settings_screen();
         enter_cb = []() { lv_indev_set_group(s_enc_indev, s_settings_group); };
         leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
+    } else {
+        ns = build_wifi_screen();
+        enter_cb = []() {
+            lv_indev_set_group(s_enc_indev, s_wifi_group);
+            if (s_wifi_status_lbl)
+                lv_label_set_text(s_wifi_status_lbl, "Starting...");
+            s_wifi_portal_pending = true;  // defer heavy work to app_ui_tick
+        };
+        leave_cb = []() {
+            s_wifi_portal_pending = false;
+#ifdef BOARD_POCKETWROOM
+            if (s_portal) { s_portal->end(); delete s_portal; s_portal = nullptr; }
+            qr_canvas_destroy();
+#endif
+            s_wifi_status_lbl = nullptr;
+            delete s_active_sb; s_active_sb = nullptr;
+        };
     }
 
     // Remember last CW mode (0–3) for quick start
@@ -681,8 +733,9 @@ static lv_obj_t* build_main_menu()
         { LV_SYMBOL_CALL,     "QSO Chatbot"   },
         { LV_SYMBOL_LIST,     "Content"       },
         { LV_SYMBOL_SETTINGS, "Settings"      },
+        { LV_SYMBOL_WIFI,     "WiFi Setup"    },
     };
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_obj_set_style_text_font(btn, menu_font(), 0);
         lv_group_add_obj(s_menu_group, btn);
@@ -1363,6 +1416,74 @@ static lv_obj_t* build_content_screen()
     return scr;
 }
 
+// ── Screen: WiFi Setup ──────────────────────────────────────────────────────
+static lv_obj_t* build_wifi_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr, menu_font());
+    sb->set_mode("WiFi Setup");
+    s_active_sb = sb;
+
+    if (s_wifi_group) lv_group_del(s_wifi_group);
+    s_wifi_group = lv_group_create();
+
+    lv_coord_t y0 = content_y() + 4;
+
+#ifdef BOARD_POCKETWROOM
+    // QR code (left side, larger for easy scanning)
+    char qr_text[64];
+    snprintf(qr_text, sizeof(qr_text), "WIFI:S:%s;T:nopass;P:;;", s_ap_ssid);
+    static constexpr int32_t QR_MAX_PX = 130;
+    lv_obj_t* qr = qr_canvas_create(scr, qr_text, QR_MAX_PX);
+    // QR side = (max_px / 33) * 33  (version 4 = 33 modules)
+    lv_coord_t qr_side = qr ? ((QR_MAX_PX / 33) * 33) : 0;
+    if (qr) lv_obj_set_pos(qr, 4, y0);
+
+    // Instructions (right of QR)
+    lv_coord_t tx = qr ? (4 + qr_side + 8) : 8;
+    lv_obj_t* info = lv_label_create(scr);
+    lv_label_set_text_fmt(info, "%s\n192.168.4.1", s_ap_ssid);
+    lv_obj_set_style_text_font(info, menu_font(), 0);
+    lv_obj_set_pos(info, tx, y0);
+    lv_obj_set_width(info, SCREEN_W - tx - 4);
+
+    // Status label (right column, below info)
+    s_wifi_status_lbl = lv_label_create(scr);
+    lv_label_set_text(s_wifi_status_lbl, "");
+    lv_obj_set_style_text_font(s_wifi_status_lbl, menu_font(), 0);
+    lv_obj_set_pos(s_wifi_status_lbl, tx, y0 + 40);
+    lv_obj_set_width(s_wifi_status_lbl, SCREEN_W - tx - 60);
+#else
+    // Simulator: WiFi not available
+    lv_obj_t* info = lv_label_create(scr);
+    lv_label_set_text(info, "WiFi not available\nin simulator");
+    lv_obj_set_style_text_font(info, menu_font(), 0);
+    lv_obj_align(info, LV_ALIGN_CENTER, 0, -10);
+
+    s_wifi_status_lbl = lv_label_create(scr);
+    lv_label_set_text(s_wifi_status_lbl, "");
+    lv_obj_set_style_text_font(s_wifi_status_lbl, menu_font(), 0);
+    lv_obj_align(s_wifi_status_lbl, LV_ALIGN_BOTTOM_MID, 0, -28);
+#endif
+
+    // Back button (bottom-right)
+    lv_obj_t* btn = lv_button_create(scr);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, "Back");
+    lv_obj_set_style_text_font(lbl, menu_font(), 0);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    lv_group_add_obj(s_wifi_group, btn);
+    lv_obj_add_event_cb(btn, [](lv_event_t*) {
+        s_stack.pop();
+        if (s_stack.size() == 1)
+            lv_indev_set_group(s_enc_indev, s_menu_group);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    return scr;
+}
+
 // ── Key event router ───────────────────────────────────────────────────────
 
 #ifdef BOARD_POCKETWROOM
@@ -1890,6 +2011,58 @@ static void app_ui_init(uint32_t rng_seed)
 static void app_ui_tick()
 {
     s_audio->poll();
+
+#ifdef BOARD_POCKETWROOM
+    // ── WiFi portal: deferred start (scan + AP + server) ────────────────
+    if (s_wifi_portal_pending && s_network && !s_portal) {
+        s_wifi_portal_pending = false;
+        if (s_wifi_status_lbl)
+            lv_label_set_text(s_wifi_status_lbl, "Scanning...");
+        lv_timer_handler();
+
+        s_portal = new WifiPortal(s_ap_ssid, *s_network,
+            [](const char* ssid, const char* pass) {
+                strncpy(s_pending_ssid, ssid, 32);
+                s_pending_ssid[32] = '\0';
+                strncpy(s_pending_pass, pass, 64);
+                s_pending_pass[64] = '\0';
+                s_wifi_creds_ready = true;
+            });
+        s_portal->begin();
+
+        if (s_wifi_status_lbl)
+            lv_label_set_text(s_wifi_status_lbl, "AP active");
+        if (s_active_sb) s_active_sb->set_wifi(false, true);
+    }
+
+    // ── WiFi portal pump ────────────────────────────────────────────────
+    if (s_portal) s_portal->loop();
+
+    // ── WiFi credential handoff from async TCP task ─────────────────────
+    if (s_wifi_creds_ready) {
+        s_wifi_creds_ready = false;
+        if (s_wifi_status_lbl)
+            lv_label_set_text_fmt(s_wifi_status_lbl, "Connecting to %s...",
+                                  s_pending_ssid);
+        lv_timer_handler();
+
+        if (s_portal) { s_portal->end(); delete s_portal; s_portal = nullptr; }
+
+        bool ok = s_network && s_network->wifi_connect(
+                      s_pending_ssid, s_pending_pass, 10000);
+        if (ok) {
+            save_wifi_creds(s_pending_ssid, s_pending_pass);
+            char ip[20];
+            s_network->wifi_get_ip(ip, sizeof(ip));
+            if (s_wifi_status_lbl)
+                lv_label_set_text_fmt(s_wifi_status_lbl, "Connected: %s", ip);
+            if (s_active_sb) s_active_sb->set_wifi(true);
+        } else {
+            if (s_wifi_status_lbl)
+                lv_label_set_text(s_wifi_status_lbl, "Failed \xe2\x80\x94 press Back");
+        }
+    }
+#endif
 
     // ── Battery polling (~every 10 s) ────────────────────────────────────
     {

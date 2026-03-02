@@ -27,9 +27,17 @@ StatusBar::StatusBar(lv_obj_t* parent, const lv_font_t* font)
     lv_label_set_text(wpm_label_, "");
     lv_obj_set_style_text_color(wpm_label_, lv_color_white(), 0);
     lv_obj_set_style_text_font(wpm_label_, f, 0);
-    // Reserve space for battery label ("100%" ≈ 3× font height + margin).
+    // Reserve space for wifi icon + battery label.
     lv_coord_t bat_reserve = lv_font_get_line_height(f) * 3 + 8;
-    lv_obj_align(wpm_label_, LV_ALIGN_RIGHT_MID, -bat_reserve, 0);
+    lv_coord_t wifi_reserve = lv_font_get_line_height(f) + 4;
+    lv_obj_align(wpm_label_, LV_ALIGN_RIGHT_MID,
+                 -(bat_reserve + wifi_reserve), 0);
+
+    wifi_label_ = lv_label_create(bar_);
+    lv_label_set_text(wifi_label_, "");
+    lv_obj_set_style_text_color(wifi_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_font(wifi_label_, f, 0);
+    lv_obj_align(wifi_label_, LV_ALIGN_RIGHT_MID, -(bat_reserve + 2), 0);
 
     bat_label_ = lv_label_create(bar_);
     lv_label_set_text(bat_label_, "");
@@ -60,6 +68,16 @@ void StatusBar::set_volume(int vol)
 void StatusBar::set_scroll()
 {
     lv_label_set_text(wpm_label_, LV_SYMBOL_UP LV_SYMBOL_DOWN " Scroll");
+}
+
+void StatusBar::set_wifi(bool connected, bool ap_mode)
+{
+    if (connected)
+        lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);
+    else if (ap_mode)
+        lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);  // same icon, could differ
+    else
+        lv_label_set_text(wifi_label_, "");
 }
 
 void StatusBar::set_battery(uint8_t percent, bool charging)
