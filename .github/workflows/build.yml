@@ -90,10 +90,9 @@ jobs:
           set -e
 
           # ── Clone gh-pages (or create it) ──────────────────────────────
-          git clone --branch gh-pages --single-branch \
-            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
-            _site 2>/dev/null || {
-            mkdir _site && cd _site && git init && git checkout -b gh-pages && cd ..
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git clone --branch gh-pages --single-branch "$REPO_URL" _site 2>/dev/null || {
+            mkdir _site && cd _site && git init -b gh-pages && git remote add origin "$REPO_URL" && cd ..
           }
 
           # ── Copy firmware into versioned directory ─────────────────────
