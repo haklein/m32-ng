@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages-deploy
@@ -77,8 +79,8 @@ jobs:
           name: m32-ng-firmware-${{ steps.version.outputs.version }}
           path: firmware/
 
-      # ── Deploy to GitHub Pages (not on PRs) ────────────────────────────
-      - name: Deploy to gh-pages
+      # ── Build Pages site content (not on PRs) ───────────────────────────
+      - name: Build Pages site
         if: github.event_name != 'pull_request'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -89,17 +91,20 @@ jobs:
         run: |
           set -e
 
-          # ── Clone gh-pages (or create it) ──────────────────────────────
+          # ── Clone gh-pages for accumulated state (versions, old builds) ──
           REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git clone --branch gh-pages --single-branch "$REPO_URL" _site 2>/dev/null || {
-            mkdir _site && cd _site && git init -b gh-pages && git remote add origin "$REPO_URL" && cd ..
+            mkdir _site
           }
+
+          # Clean git metadata — we only need the file content
+          rm -rf _site/.git
 
           # ── Copy firmware into versioned directory ─────────────────────
           mkdir -p "_site/firmware/$DIR"
           cp firmware/* "_site/firmware/$DIR/"
 
-          # ── Per-version manifest.json ──────────────────────────────────
+          # ── Per-version manifest.json ────────────────────────────────────
           cat > "_site/firmware/$DIR/manifest.json" << EOF
           {
             "name": "Morserino-32 NG",
@@ -119,7 +124,7 @@ jobs:
           }
           EOF
 
-          # ── Update versions.json ───────────────────────────────────────
+          # ── Update versions.json ─────────────────────────────────────────
           cd _site
           python3 << 'PYEOF'
           import json, os
@@ -165,16 +170,36 @@ jobs:
               json.dump({"versions": versions}, f, indent=2)
           PYEOF
 
-          # ── Copy static installer page ─────────────────────────────────
+          # ── Copy static installer page ───────────────────────────────────
           cd ..
           cp .github/web-installer/index.html _site/index.html
           touch _site/.nojekyll
 
-          # ── Commit and push ────────────────────────────────────────────
+          # ── Also update gh-pages branch for state persistence ────────────
           cd _site
+          git init -b gh-pages
+          git remote add origin "$REPO_URL"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet && echo "No changes to deploy" && exit 0
           git commit -m "Deploy firmware $VERSION ($COMMIT)"
-          git push origin gh-pages
+          git push --force origin gh-pages
+          rm -rf .git
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site/
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
