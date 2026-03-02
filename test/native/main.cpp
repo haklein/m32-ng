@@ -82,7 +82,7 @@ int main()
 
         NativeAudioOutputAlsa audio;
         audio.set_volume(7);
-        audio.set_adsr(0.005f, 0.0f, 1.0f, 0.005f);
+        audio.set_adsr(0.007f, 0.0f, 1.0f, 0.007f);
         audio.begin();
 
         play_V(audio); std::this_thread::sleep_for(ms(cgap_ms));

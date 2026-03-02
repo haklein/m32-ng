@@ -83,7 +83,7 @@ void PocketAudioOutput::begin()
     // ── 8. Sidetone defaults ─────────────────────────────────────────────────
     sidetone_.setFrequency(DEFAULT_FREQ);
     sidetone_.setVolume(1.0f);   // full amplitude — volume via codec analog stage
-    sidetone_.setADSR(0.005f, 0.0f, 1.0f, 0.005f);
+    sidetone_.setADSR(0.007f, 0.0f, 1.0f, 0.007f);
 }
 
 void PocketAudioOutput::codec_init_clocking()
@@ -101,6 +101,18 @@ void PocketAudioOutput::codec_enable_outputs()
     // Headphone amp — used with wired headset.
     // HPLGAIN/HPRGAIN mute bit (BIT(2)) defaults to 0 = muted after reset;
     // setHeadphoneMute(false) must be called explicitly to unmute.
+    //
+    // Output common-mode voltage: 1.65V (default 1.35V is too low for
+    // low-impedance headphones — can cause oscillation / HF noise).
+    codec_.modifyRegister(AIC31XX_HPDRIVER, AIC31XX_HPD_OCMV_MASK,
+                          AIC31XX_HPD_OCMV_1_65V << AIC31XX_HPD_OCMV_SHIFT);
+    // HP performance mode: highest (bits 4-3 = 11) — best THD+N / noise floor.
+    codec_.modifyRegister(AIC31XX_HPCONTROL, AIC31XX_HPCONTROL_PERFORMANCE_MASK,
+                          0x3 << 3);
+    // POP removal: D7=1 (optimized power-down sequence), D6-D3=0111 (304ms
+    // power-on time), D2-D1=11 (3.9ms ramp step), D0=0 (AVDD divider CM).
+    // Value: 1_0111_110 = 0xBE
+    codec_.writeRegister(AIC31XX_HPPOP, 0xBE);
     codec_.enableHeadphoneAmp();
     codec_.setHeadphoneVolume(-6.0f, -6.0f);
     codec_.setHeadphoneGain(0.0f, 0.0f);
@@ -165,11 +177,15 @@ void PocketAudioOutput::handle_headset_event()
     Serial.printf("AIC31XX: INT flags=0x%02X\n", flags);
 
     if (codec_.isHeadsetDetected()) {
-        Serial.println("AIC31XX: Headset detected — HP on, SPK off");
+        Serial.println("AIC31XX: Headset detected — HP on, SPK power down");
         codec_.setHeadphoneMute(false);
         codec_.setSpeakerMute(true);
+        // Fully power down class-D amp to eliminate switching noise coupling
+        // into headphone output.
+        codec_.modifyRegister(AIC31XX_SPKAMP, AIC3100_SPKAMP_POWER_MASK, 0x0);
     } else {
         Serial.println("AIC31XX: Headset removed — SPK on, HP off");
+        codec_.enableSpeakerAmp();
         codec_.setSpeakerMute(false);
         codec_.setHeadphoneMute(true);
     }

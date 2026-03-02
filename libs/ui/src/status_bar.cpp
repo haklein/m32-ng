@@ -1,12 +1,17 @@
 #include "status_bar.hpp"
 #include <cstdio>
 
-StatusBar::StatusBar(lv_obj_t* parent)
+static constexpr lv_coord_t PAD = 2;
+
+StatusBar::StatusBar(lv_obj_t* parent, const lv_font_t* font)
 {
+    const lv_font_t* f = font ? font : lv_font_get_default();
+    height_ = lv_font_get_line_height(f) + PAD * 2;
+
     bar_ = lv_obj_create(parent);
-    lv_obj_set_size(bar_, LV_PCT(100), HEIGHT);
+    lv_obj_set_size(bar_, LV_PCT(100), height_);
     lv_obj_set_pos(bar_, 0, 0);
-    lv_obj_set_style_pad_all(bar_, 2, 0);
+    lv_obj_set_style_pad_all(bar_, PAD, 0);
     lv_obj_set_style_radius(bar_, 0, 0);
     lv_obj_set_style_border_width(bar_, 0, 0);
     lv_obj_set_style_bg_color(bar_, lv_palette_darken(LV_PALETTE_BLUE_GREY, 3), 0);
@@ -15,16 +20,21 @@ StatusBar::StatusBar(lv_obj_t* parent)
     mode_label_ = lv_label_create(bar_);
     lv_label_set_text(mode_label_, "");
     lv_obj_set_style_text_color(mode_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_font(mode_label_, f, 0);
     lv_obj_align(mode_label_, LV_ALIGN_LEFT_MID, 4, 0);
 
     wpm_label_ = lv_label_create(bar_);
     lv_label_set_text(wpm_label_, "");
     lv_obj_set_style_text_color(wpm_label_, lv_color_white(), 0);
-    lv_obj_align(wpm_label_, LV_ALIGN_RIGHT_MID, -44, 0);
+    lv_obj_set_style_text_font(wpm_label_, f, 0);
+    // Reserve space for battery label ("100%" ≈ 3× font height + margin).
+    lv_coord_t bat_reserve = lv_font_get_line_height(f) * 3 + 8;
+    lv_obj_align(wpm_label_, LV_ALIGN_RIGHT_MID, -bat_reserve, 0);
 
     bat_label_ = lv_label_create(bar_);
     lv_label_set_text(bat_label_, "");
     lv_obj_set_style_text_color(bat_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_font(bat_label_, f, 0);
     lv_obj_align(bat_label_, LV_ALIGN_RIGHT_MID, -4, 0);
 }
 

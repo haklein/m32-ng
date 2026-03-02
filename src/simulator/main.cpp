@@ -62,7 +62,7 @@ int main(void)
     s_audio = new NativeAudioOutputAlsa("default");
     s_audio->begin();
     s_audio->set_volume(s_settings.volume);
-    s_audio->set_adsr(0.005f, 0.0f, 1.0f, 0.005f);
+    s_audio->set_adsr(0.007f, 0.0f, 1.0f, 0.007f);
 
     s_keys = new NativeKeyInputSdl();
     s_midi = new NativeKeyInputMidi(MIDI_NOTE_DIT, MIDI_NOTE_DAH,

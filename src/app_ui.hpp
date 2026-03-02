@@ -30,7 +30,7 @@
 #include "cw_chatbot.h"
 #include "lv_font_intel.h"
 
-static constexpr lv_coord_t CONTENT_Y = StatusBar::HEIGHT + 2;
+// content_y() removed — use content_y() below (depends on font setting).
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
@@ -73,6 +73,23 @@ static AppSettings s_settings;
 static const lv_font_t* cw_text_font()
 {
     return s_settings.text_font_size == 0 ? &lv_font_intel_20 : &lv_font_intel_28;
+}
+
+static const lv_font_t* ui_font()
+{
+    return s_settings.text_font_size == 0 ? &lv_font_intel_14 : &lv_font_intel_20;
+}
+
+// Menu font: montserrat (includes LVGL symbol glyphs for icons).
+static const lv_font_t* menu_font()
+{
+    return s_settings.text_font_size == 0
+        ? &lv_font_montserrat_14 : &lv_font_montserrat_20;
+}
+
+static lv_coord_t content_y()
+{
+    return lv_font_get_line_height(menu_font()) + 4 + 2;  // font height + 2*pad + gap
 }
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
@@ -628,6 +645,7 @@ static lv_obj_t* build_main_menu()
 #endif
 
     lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_style_text_font(list, menu_font(), 0);
 #ifdef NATIVE_BUILD
     lv_obj_set_size(list, SCREEN_W - 60, SCREEN_H - 100);
     lv_obj_align(list, LV_ALIGN_CENTER, 0, 20);
@@ -651,6 +669,7 @@ static lv_obj_t* build_main_menu()
     };
     for (int i = 0; i < 6; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
+        lv_obj_set_style_text_font(btn, menu_font(), 0);
         lv_group_add_obj(s_menu_group, btn);
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             push_mode_screen((int)(intptr_t)lv_event_get_user_data(e));
@@ -666,7 +685,7 @@ static lv_obj_t* build_keyer_screen()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    StatusBar* sb = new StatusBar(scr);
+    StatusBar* sb = new StatusBar(scr, menu_font());
     sb->set_mode("CW Keyer");
     sb->set_wpm(s_settings.wpm);
     s_active_sb = sb;
@@ -676,10 +695,10 @@ static lv_obj_t* build_keyer_screen()
     lv_label_set_text(hint,
         "Space=DIT  Enter=DAH  /=Straight  "
         "\xe2\x86\x91/\xe2\x86\x93=WPM  E=back");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, CONTENT_Y + 2);
-    lv_coord_t tf_y = CONTENT_Y + 24;
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, content_y() + 2);
+    lv_coord_t tf_y = content_y() + 24;
 #else
-    lv_coord_t tf_y = CONTENT_Y + 2;
+    lv_coord_t tf_y = content_y() + 2;
 #endif
 
     s_keyer_tf = new CWTextField(scr, cw_text_font());
@@ -695,7 +714,7 @@ static lv_obj_t* build_generator_screen()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    StatusBar* sb = new StatusBar(scr);
+    StatusBar* sb = new StatusBar(scr, menu_font());
     sb->set_mode("CW Generator");
     sb->set_wpm(s_settings.wpm);
     s_active_sb = sb;
@@ -703,10 +722,10 @@ static lv_obj_t* build_generator_screen()
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(scr);
     lv_label_set_text(hint, "a=pause/resume  \xe2\x86\x91/\xe2\x86\x93=WPM  E=back");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, CONTENT_Y + 2);
-    lv_coord_t tf_y = CONTENT_Y + 24;
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, content_y() + 2);
+    lv_coord_t tf_y = content_y() + 24;
 #else
-    lv_coord_t tf_y = CONTENT_Y + 2;
+    lv_coord_t tf_y = content_y() + 2;
 #endif
 
     s_gen_tf = new CWTextField(scr, cw_text_font());
@@ -722,14 +741,14 @@ static lv_obj_t* build_echo_screen()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    StatusBar* sb = new StatusBar(scr);
+    StatusBar* sb = new StatusBar(scr, menu_font());
     sb->set_mode("Echo Trainer");
     sb->set_wpm(s_settings.wpm);
     s_active_sb = sb;
 
-    const lv_coord_t ROW_H  = (SCREEN_H - CONTENT_Y) / 3;
-    const lv_coord_t ROW1_Y = CONTENT_Y + 4;
-    const lv_coord_t ROW2_Y = CONTENT_Y + ROW_H + 4;
+    const lv_coord_t ROW_H  = (SCREEN_H - content_y()) / 3;
+    const lv_coord_t ROW1_Y = content_y() + 4;
+    const lv_coord_t ROW2_Y = content_y() + ROW_H + 4;
 
     lv_obj_t* l1 = lv_label_create(scr);
     lv_label_set_text(l1, "Sent:");
@@ -770,7 +789,7 @@ static lv_obj_t* build_chatbot_screen()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    StatusBar* sb = new StatusBar(scr);
+    StatusBar* sb = new StatusBar(scr, menu_font());
     sb->set_mode("QSO Chatbot");
     sb->set_wpm(s_settings.wpm);
     s_active_sb = sb;
@@ -780,10 +799,10 @@ static lv_obj_t* build_chatbot_screen()
     lv_label_set_text(hint,
         "Space=DIT  Enter=DAH  /=Straight  "
         "\xe2\x86\x91/\xe2\x86\x93=WPM  E=back");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, CONTENT_Y + 2);
-    lv_coord_t base_y = CONTENT_Y + 24;
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, content_y() + 2);
+    lv_coord_t base_y = content_y() + 24;
 #else
-    lv_coord_t base_y = CONTENT_Y + 2;
+    lv_coord_t base_y = content_y() + 2;
 #endif
 
     // Bot label + text field (upper half)
@@ -819,7 +838,7 @@ static lv_obj_t* build_settings_screen()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    StatusBar* sb = new StatusBar(scr);
+    StatusBar* sb = new StatusBar(scr, menu_font());
     sb->set_mode("Settings");
     sb->set_wpm(s_settings.wpm);
     s_active_sb = sb;
@@ -832,8 +851,9 @@ static lv_obj_t* build_settings_screen()
 
     // Scrollable container below the status bar
     lv_obj_t* cont = lv_obj_create(scr);
-    lv_obj_set_pos(cont, 0, CONTENT_Y);
-    lv_obj_set_size(cont, SCREEN_W, SCREEN_H - CONTENT_Y);
+    lv_obj_set_pos(cont, 0, content_y());
+    lv_obj_set_size(cont, SCREEN_W, SCREEN_H - content_y());
+    lv_obj_set_style_text_font(cont, menu_font(), 0);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(cont, PAD, 0);
     lv_obj_set_style_pad_all(cont, PAD, 0);
@@ -1100,7 +1120,7 @@ static lv_obj_t* build_content_screen()
     lv_obj_t* scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    StatusBar* sb = new StatusBar(scr);
+    StatusBar* sb = new StatusBar(scr, menu_font());
     sb->set_mode("Content");
     sb->set_wpm(s_settings.wpm);
     s_active_sb = sb;
@@ -1117,8 +1137,9 @@ static lv_obj_t* build_content_screen()
 
     // Scrollable container below the status bar
     lv_obj_t* cont = lv_obj_create(scr);
-    lv_obj_set_pos(cont, 0, CONTENT_Y);
-    lv_obj_set_size(cont, SCREEN_W, SCREEN_H - CONTENT_Y);
+    lv_obj_set_pos(cont, 0, content_y());
+    lv_obj_set_size(cont, SCREEN_W, SCREEN_H - content_y());
+    lv_obj_set_style_text_font(cont, menu_font(), 0);
     lv_obj_set_style_pad_all(cont, 0, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);

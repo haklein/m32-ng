@@ -166,7 +166,7 @@ void setup()
     s_audio = new PocketAudioOutput();
     s_audio->begin();
     s_audio->set_volume(14);
-    s_audio->set_adsr(0.005f, 0.0f, 1.0f, 0.005f);
+    s_audio->set_adsr(0.007f, 0.0f, 1.0f, 0.007f);
 
     Log.verboseln("Playing VVV");
     play_V(); cw_charspace();
@@ -281,7 +281,7 @@ void setup()
     s_audio = new PocketAudioOutput();
     s_audio->begin();
     s_audio->set_volume(s_settings.volume);
-    s_audio->set_adsr(0.005f, 0.0f, 1.0f, 0.005f);
+    s_audio->set_adsr(0.007f, 0.0f, 1.0f, 0.007f);
 
     // ── Touch calibration ─────────────────────────────────────────────────
     auto sample_idle = [](int pin) -> uint32_t {

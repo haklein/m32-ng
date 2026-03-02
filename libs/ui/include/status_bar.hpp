@@ -3,20 +3,18 @@
 #include <cstdint>
 #include <lvgl.h>
 
-// Thin 20 px bar pinned to the top of a screen.
+// Thin bar pinned to the top of a screen.
 //
-// Create one per screen (or share a single bar and reparent it — simpler to
-// just create one per screen since screens are short-lived).
+// Height adapts to the supplied font (default: LVGL default font → 20 px).
 //
 // Shows:  <mode-name>          WPM: <nn>
 
 class StatusBar
 {
 public:
-    static constexpr lv_coord_t HEIGHT = 20;
-
     // parent is typically the screen object.
-    explicit StatusBar(lv_obj_t* parent);
+    // font: if non-null, applied to all labels and used to compute bar height.
+    explicit StatusBar(lv_obj_t* parent, const lv_font_t* font = nullptr);
 
     void set_mode(const char* name);
     void set_wpm(int wpm);
@@ -25,10 +23,12 @@ public:
     void set_battery(uint8_t percent, bool charging);
 
     lv_obj_t* obj() const { return bar_; }
+    lv_coord_t height() const { return height_; }
 
 private:
-    lv_obj_t* bar_;
-    lv_obj_t* mode_label_;
-    lv_obj_t* wpm_label_;
-    lv_obj_t* bat_label_;
+    lv_obj_t*  bar_;
+    lv_obj_t*  mode_label_;
+    lv_obj_t*  wpm_label_;
+    lv_obj_t*  bat_label_;
+    lv_coord_t height_;
 };
