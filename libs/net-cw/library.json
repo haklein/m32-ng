@@ -1,0 +1,5 @@
+{
+  "name": "net-cw",
+  "version": "1.0.0",
+  "description": "CWCom/MorseKOB and MOPP protocol codecs for CW over IP"
+}

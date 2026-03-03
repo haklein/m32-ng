@@ -12,6 +12,8 @@ enum class CwProto {
     ESP_NOW,  // low-latency local peer-to-peer
     UDP,      // IP UDP unicast
     TCP,      // IP TCP stream (iCW, VBand)
+    CWCOM,    // CWCom/MorseKOB — UDP port 7890
+    MOPP,     // MOPP — UDP port 7373
 };
 
 // WiFi and CW transport abstraction.

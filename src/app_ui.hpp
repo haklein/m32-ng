@@ -30,12 +30,16 @@
 #include "status_bar.hpp"
 #include "cw_chatbot.h"
 #include "lv_font_intel.h"
+#include "timing_buffer.h"
+#include "cwcom_codec.h"
+#include "mopp_codec.h"
+#include "rx_cw_player.h"
 
 // content_y() removed — use content_y() below (depends on font setting).
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 12;
+    static constexpr uint8_t VERSION = 13;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -73,6 +77,10 @@ struct AppSettings {
     // VERSION 12
     uint8_t  curtisb_dit_pct = 40; // Curtis B dit timing %, 0-100
     uint8_t  curtisb_dah_pct = 40; // Curtis B dah timing %, 0-100
+    // VERSION 13 — Internet CW
+    uint8_t  inet_proto     = 0;    // 0=CWCom, 1=MOPP
+    uint16_t cwcom_wire     = 111;  // CWCom wire/channel number
+    char     callsign[16]   = {};   // station callsign (empty = anonymous)
 };
 static AppSettings s_settings;
 
@@ -99,7 +107,7 @@ static lv_coord_t content_y()
 }
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
-enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT };
+enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT, INTERNET_CW };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── HAL pointers (assigned by platform before app_ui_init) ────────────────
@@ -135,6 +143,16 @@ static volatile bool s_cw_engine_active = false;
 static volatile unsigned long s_cw_last_element_end_t = 0;
 static volatile bool          s_cw_tame_echo          = false;
 #endif
+
+// ── Internet CW state ─────────────────────────────────────────────────────
+static volatile bool s_inet_cw_active = false;  // gates timing capture
+static TimingRingBuffer<64> s_timing_ringbuf;
+static CwComCodec*   s_cwcom_codec  = nullptr;
+static MoppCodec*    s_mopp_codec   = nullptr;
+static RxCwPlayer*   s_rx_player    = nullptr;
+static CWTextField*  s_inet_rx_tf   = nullptr;
+static CWTextField*  s_inet_tx_tf   = nullptr;
+static unsigned long s_inet_keepalive_t = 0;  // last keepalive sent (ms)
 
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
@@ -211,6 +229,13 @@ static char          s_pending_pass[65]      = {};
 static WifiPortal*   s_portal               = nullptr;
 #endif
 
+// ── Internet CW widgets (set/cleared with inet CW screens) ──────────────
+static lv_obj_t*   s_inet_connect_btn = nullptr;
+static lv_obj_t*   s_inet_status_lbl  = nullptr;
+static lv_obj_t*   s_inet_wire_spin   = nullptr;
+static lv_obj_t*   s_inet_proto_dd    = nullptr;
+static lv_obj_t*   s_inet_wire_lbl    = nullptr;
+
 static void save_wifi_creds(const char* ssid, const char* pass)
 {
     if (!s_storage) return;
@@ -238,6 +263,7 @@ static lv_group_t* s_menu_group     = nullptr;
 static lv_group_t* s_settings_group = nullptr;
 static lv_group_t* s_content_group  = nullptr;
 static lv_group_t* s_wifi_group     = nullptr;
+static lv_group_t* s_inet_group    = nullptr;
 
 // ── Encoder adjust mode (FN button cycles: WPM / Volume / Scroll) ───────
 enum class EncoderMode { WPM, VOLUME, SCROLL };
@@ -349,7 +375,8 @@ static bool cw_mode_active()
 {
     return s_active_mode == ActiveMode::KEYER ||
            s_active_mode == ActiveMode::ECHO ||
-           s_active_mode == ActiveMode::CHATBOT;
+           s_active_mode == ActiveMode::CHATBOT ||
+           s_active_mode == ActiveMode::INTERNET_CW;
 }
 
 // ── Forward declarations ───────────────────────────────────────────────────
@@ -361,6 +388,8 @@ static lv_obj_t* build_chatbot_screen();
 static lv_obj_t* build_settings_screen();
 static lv_obj_t* build_content_screen();
 static lv_obj_t* build_wifi_screen();
+static lv_obj_t* build_inet_cw_screen();
+static void      inet_cw_disconnect();
 static void      apply_settings();
 static std::string content_phrase();
 static void      route(KeyEvent ev);
@@ -385,35 +414,42 @@ static void enc_read_cb(lv_indev_t*, lv_indev_data_t* d)
 // s_audio->tone_on/off() is lock-free; s_decoder is on the same task.
 static void on_play_state(PlayState state)
 {
+    unsigned long now = (unsigned long)app_millis();
     switch (state) {
         case PLAY_STATE_DOT_ON:
         case PLAY_STATE_DASH_ON:
             s_audio->tone_on(s_settings.freq_hz);
             s_decoder->set_transmitting(true);
+            if (s_inet_cw_active)
+                s_timing_ringbuf.push(true, (uint32_t)now);
 #ifdef BOARD_POCKETWROOM
-            s_cw_last_element_end_t = (unsigned long)app_millis();
+            s_cw_last_element_end_t = now;
 #else
-            s_keyer_last_element_end_t = (unsigned long)app_millis();
+            s_keyer_last_element_end_t = now;
 #endif
             break;
         case PLAY_STATE_DOT_OFF:
             s_audio->tone_off();
             s_decoder->append_dot();
             s_decoder->set_transmitting(false);
+            if (s_inet_cw_active)
+                s_timing_ringbuf.push(false, (uint32_t)now);
 #ifdef BOARD_POCKETWROOM
-            s_cw_last_element_end_t = (unsigned long)app_millis();
+            s_cw_last_element_end_t = now;
 #else
-            s_keyer_last_element_end_t = (unsigned long)app_millis();
+            s_keyer_last_element_end_t = now;
 #endif
             break;
         case PLAY_STATE_DASH_OFF:
             s_audio->tone_off();
             s_decoder->append_dash();
             s_decoder->set_transmitting(false);
+            if (s_inet_cw_active)
+                s_timing_ringbuf.push(false, (uint32_t)now);
 #ifdef BOARD_POCKETWROOM
-            s_cw_last_element_end_t = (unsigned long)app_millis();
+            s_cw_last_element_end_t = now;
 #else
-            s_keyer_last_element_end_t = (unsigned long)app_millis();
+            s_keyer_last_element_end_t = now;
 #endif
             break;
         default:
@@ -470,6 +506,10 @@ static void on_letter_decoded(const std::string& letter)
         if (s_chatbot_oper_tf && letter != " ") {
             s_chatbot_oper_tf->add_string(letter);
         }
+        s_keyer_word_pending = true;
+    } else if (s_active_mode == ActiveMode::INTERNET_CW) {
+        if (!s_inet_tx_tf || letter == " ") return;
+        s_inet_tx_tf->add_string(letter);
         s_keyer_word_pending = true;
     }
 }
@@ -667,7 +707,7 @@ static void push_mode_screen(int idx)
         ns = build_settings_screen();
         enter_cb = []() { lv_indev_set_group(s_enc_indev, s_settings_group); };
         leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
-    } else {
+    } else if (idx == 6) {
         ns = build_wifi_screen();
         enter_cb = []() {
             lv_indev_set_group(s_enc_indev, s_wifi_group);
@@ -683,6 +723,48 @@ static void push_mode_screen(int idx)
 #endif
             s_wifi_status_lbl = nullptr;
             delete s_active_sb; s_active_sb = nullptr;
+        };
+    } else {
+        // idx == 7: Internet CW
+        ns = build_inet_cw_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::INTERNET_CW;
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = true;
+#endif
+            lv_indev_set_group(s_enc_indev, s_inet_group);
+        };
+        leave_cb = []() {
+            // This fires when:
+            //  a) active CW screen is pushed on top (leave settings for CW)
+            //  b) popping back to main menu (leave settings entirely)
+            // Only do full teardown for case (b): when active CW screen
+            // isn't on top (i.e. we're going back to main menu).
+            if (!s_inet_cw_active) {
+                // Case (b): leaving Internet CW entirely
+                inet_cw_disconnect();  // no-op if not connected
+#ifdef BOARD_POCKETWROOM
+                s_cw_engine_active = false;
+#endif
+                s_active_mode              = ActiveMode::NONE;
+                s_encoder_mode             = EncoderMode::WPM;
+                s_keyer_word_pending       = false;
+                s_keyer_last_element_end_t = 0;
+                s_timing_ringbuf.clear();
+                delete s_inet_rx_tf;  s_inet_rx_tf  = nullptr;
+                delete s_inet_tx_tf;  s_inet_tx_tf  = nullptr;
+                s_audio->tone_off();
+            }
+            s_inet_connect_btn = nullptr;
+            s_inet_status_lbl  = nullptr;
+            s_inet_wire_spin   = nullptr;
+            s_inet_proto_dd    = nullptr;
+            s_inet_wire_lbl    = nullptr;
+            // Only delete status bar when fully leaving (not when
+            // active CW screen is being pushed — it creates its own).
+            if (!s_inet_cw_active) {
+                delete s_active_sb; s_active_sb = nullptr;
+            }
         };
     }
 
@@ -734,8 +816,9 @@ static lv_obj_t* build_main_menu()
         { LV_SYMBOL_LIST,     "Content"       },
         { LV_SYMBOL_SETTINGS, "Settings"      },
         { LV_SYMBOL_WIFI,     "WiFi Setup"    },
+        { LV_SYMBOL_WIFI,     "Internet CW"   },
     };
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_obj_set_style_text_font(btn, menu_font(), 0);
         lv_group_add_obj(s_menu_group, btn);
@@ -1484,6 +1567,265 @@ static lv_obj_t* build_wifi_screen()
     return scr;
 }
 
+// ── Screen: Internet CW ──────────────────────────────────────────────────
+
+// Default server hosts
+static constexpr const char* CWCOM_DEFAULT_HOST = "mtc-kob.dyndns.org";
+static constexpr uint16_t    CWCOM_DEFAULT_PORT = 7890;
+static constexpr const char* MOPP_DEFAULT_HOST  = "mopp.hamradio.pl";
+static constexpr uint16_t    MOPP_DEFAULT_PORT  = 7373;
+
+// Forward declarations
+static lv_obj_t* build_inet_cw_active_screen();
+static void      inet_cw_disconnect();
+
+static void inet_cw_connect()
+{
+    if (!s_network) return;
+
+    // Allocate codecs
+    delete s_cwcom_codec; s_cwcom_codec = nullptr;
+    delete s_mopp_codec;  s_mopp_codec  = nullptr;
+    delete s_rx_player;   s_rx_player   = nullptr;
+
+    const char* host;
+    uint16_t port;
+
+    if (s_settings.inet_proto == 0) {
+        host = CWCOM_DEFAULT_HOST;
+        port = CWCOM_DEFAULT_PORT;
+        s_cwcom_codec = new CwComCodec(
+            s_settings.callsign[0] ? s_settings.callsign : "M32",
+            s_settings.cwcom_wire);
+    } else {
+        host = MOPP_DEFAULT_HOST;
+        port = MOPP_DEFAULT_PORT;
+        s_mopp_codec = new MoppCodec((uint8_t)s_settings.wpm);
+    }
+
+    // RX player: sidetone + decode
+    s_rx_player = new RxCwPlayer(
+        [](){ s_audio->tone_on(s_settings.freq_hz); },
+        [](){ s_audio->tone_off(); },
+        [](const std::string& letter) {
+            if (s_inet_rx_tf) s_inet_rx_tf->add_string(letter);
+        },
+        app_millis,
+        1200u / (unsigned long)s_settings.wpm * 2
+    );
+
+    CwProto proto = (s_settings.inet_proto == 0)
+                    ? CwProto::CWCOM : CwProto::MOPP;
+
+    if (s_inet_status_lbl)
+        lv_label_set_text(s_inet_status_lbl, "Connecting...");
+
+    bool ok = s_network->cw_connect(proto, host, port);
+    if (!ok) {
+        if (s_inet_status_lbl)
+            lv_label_set_text(s_inet_status_lbl, "Connect failed");
+        return;
+    }
+
+    // Send connect packet
+    if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+        uint8_t buf[CwComCodec::SHORT_SIZE + CwComCodec::PACKET_SIZE];
+        int n = s_cwcom_codec->build_connect(buf);
+        s_network->cw_send(buf, CwComCodec::SHORT_SIZE);
+        if (n > CwComCodec::SHORT_SIZE)
+            s_network->cw_send(buf + CwComCodec::SHORT_SIZE,
+                               CwComCodec::PACKET_SIZE);
+    } else if (s_mopp_codec) {
+        uint8_t buf[16];
+        int n = MoppCodec::build_connect(buf, sizeof(buf));
+        if (n > 0) s_network->cw_send(buf, (size_t)n);
+    }
+
+    s_inet_cw_active = true;
+    s_inet_keepalive_t = (unsigned long)app_millis();
+    s_timing_ringbuf.clear();
+
+    // Push the active CW screen (RX/TX text fields, encoder=WPM)
+    lv_obj_t* cw_scr = build_inet_cw_active_screen();
+    s_stack.push(cw_scr,
+        []() {
+            // Encoder → WPM on the active CW screen
+            lv_indev_set_group(s_enc_indev, nullptr);
+        },
+        []() {
+            // Popping back to settings screen — disconnect + cleanup
+            inet_cw_disconnect();
+            s_keyer_word_pending       = false;
+            s_keyer_last_element_end_t = 0;
+            s_timing_ringbuf.clear();
+            delete s_inet_rx_tf;  s_inet_rx_tf  = nullptr;
+            delete s_inet_tx_tf;  s_inet_tx_tf  = nullptr;
+            delete s_active_sb;   s_active_sb   = nullptr;
+            s_audio->tone_off();
+        });
+}
+
+static void inet_cw_disconnect()
+{
+    if (!s_network) return;
+    s_inet_cw_active = false;
+
+    if (s_network->cw_is_connected()) {
+        if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+            uint8_t buf[CwComCodec::SHORT_SIZE];
+            s_cwcom_codec->build_disconnect(buf);
+            s_network->cw_send(buf, CwComCodec::SHORT_SIZE);
+        } else if (s_mopp_codec) {
+            uint8_t buf[16];
+            int n = MoppCodec::build_disconnect(buf, sizeof(buf));
+            if (n > 0) s_network->cw_send(buf, (size_t)n);
+        }
+        s_network->cw_disconnect();
+    }
+
+    delete s_cwcom_codec; s_cwcom_codec = nullptr;
+    delete s_mopp_codec;  s_mopp_codec  = nullptr;
+    delete s_rx_player;   s_rx_player   = nullptr;
+}
+
+// ── Internet CW: settings/connect screen (encoder navigates controls) ────
+static lv_obj_t* build_inet_cw_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr, menu_font());
+    sb->set_mode("Internet CW");
+    sb->set_wpm(s_settings.wpm);
+    s_active_sb = sb;
+
+    if (s_inet_group) lv_group_del(s_inet_group);
+    s_inet_group = lv_group_create();
+
+    lv_coord_t y = content_y() + 4;
+
+    // ── Protocol dropdown ────────────────────────────────────────────
+    lv_obj_t* proto_lbl = lv_label_create(scr);
+    lv_label_set_text(proto_lbl, "Protocol");
+    lv_obj_set_style_text_font(proto_lbl, menu_font(), 0);
+    lv_obj_set_pos(proto_lbl, 4, y + 4);
+
+    s_inet_proto_dd = lv_dropdown_create(scr);
+    lv_dropdown_set_options(s_inet_proto_dd, "CWCom\nMOPP");
+    lv_dropdown_set_selected(s_inet_proto_dd, s_settings.inet_proto);
+    lv_obj_set_style_text_font(s_inet_proto_dd, menu_font(), 0);
+    lv_obj_set_pos(s_inet_proto_dd, 90, y);
+    lv_obj_set_size(s_inet_proto_dd, 100, 30);
+    lv_obj_add_event_cb(s_inet_proto_dd, [](lv_event_t* e) {
+        s_settings.inet_proto =
+            (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
+        save_settings();
+        // Show/hide wire controls
+        if (s_inet_wire_spin && s_inet_wire_lbl) {
+            if (s_settings.inet_proto != 0) {
+                lv_obj_add_flag(s_inet_wire_spin, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(s_inet_wire_lbl, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_remove_flag(s_inet_wire_spin, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_remove_flag(s_inet_wire_lbl, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_group_add_obj(s_inet_group, s_inet_proto_dd);
+
+    y += 34;
+
+    // ── Wire spinbox (CWCom only) ────────────────────────────────────
+    s_inet_wire_lbl = lv_label_create(scr);
+    lv_label_set_text(s_inet_wire_lbl, "Wire");
+    lv_obj_set_style_text_font(s_inet_wire_lbl, menu_font(), 0);
+    lv_obj_set_pos(s_inet_wire_lbl, 4, y + 4);
+
+    s_inet_wire_spin = lv_spinbox_create(scr);
+    lv_spinbox_set_range(s_inet_wire_spin, 1, 32000);
+    lv_spinbox_set_digit_count(s_inet_wire_spin, 5);
+    lv_spinbox_set_value(s_inet_wire_spin, s_settings.cwcom_wire);
+    lv_obj_set_style_text_font(s_inet_wire_spin, menu_font(), 0);
+    lv_obj_set_pos(s_inet_wire_spin, 90, y);
+    lv_obj_set_size(s_inet_wire_spin, 100, 30);
+    lv_obj_add_event_cb(s_inet_wire_spin, [](lv_event_t* e) {
+        s_settings.cwcom_wire =
+            (uint16_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_group_add_obj(s_inet_group, s_inet_wire_spin);
+
+    if (s_settings.inet_proto != 0) {
+        lv_obj_add_flag(s_inet_wire_lbl, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_inet_wire_spin, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    y += 34;
+
+    // ── Status label ─────────────────────────────────────────────────
+    s_inet_status_lbl = lv_label_create(scr);
+    lv_label_set_text(s_inet_status_lbl, "");
+    lv_obj_set_style_text_font(s_inet_status_lbl, menu_font(), 0);
+    lv_obj_set_pos(s_inet_status_lbl, 4, y);
+
+    // ── Connect button (bottom-right) ────────────────────────────────
+    s_inet_connect_btn = lv_button_create(scr);
+    lv_obj_align(s_inet_connect_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    lv_obj_set_size(s_inet_connect_btn, 100, 34);
+    lv_obj_t* btn_lbl = lv_label_create(s_inet_connect_btn);
+    lv_label_set_text(btn_lbl, "Connect");
+    lv_obj_set_style_text_font(btn_lbl, menu_font(), 0);
+    lv_obj_center(btn_lbl);
+    lv_obj_add_event_cb(s_inet_connect_btn, [](lv_event_t*) {
+        inet_cw_connect();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_group_add_obj(s_inet_group, s_inet_connect_btn);
+
+    return scr;
+}
+
+// ── Internet CW: active CW screen (encoder=WPM, long press=back) ────────
+static lv_obj_t* build_inet_cw_active_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    delete s_active_sb; s_active_sb = nullptr;  // free settings screen's bar
+    const char* mode_str = (s_settings.inet_proto == 0)
+        ? "CWCom" : "MOPP";
+    StatusBar* sb = new StatusBar(scr, menu_font());
+    sb->set_mode(mode_str);
+    sb->set_wpm(s_settings.wpm);
+    s_active_sb = sb;
+
+    lv_coord_t y = content_y() + 2;
+
+    // ── RX text field (top half) ─────────────────────────────────────
+    lv_obj_t* rx_lbl = lv_label_create(scr);
+    lv_label_set_text(rx_lbl, "RX");
+    lv_obj_set_style_text_font(rx_lbl, menu_font(), 0);
+    lv_obj_set_pos(rx_lbl, 4, y);
+
+    lv_coord_t avail = SCREEN_H - y - 4;
+    lv_coord_t rx_h = avail / 2 - 2;
+    s_inet_rx_tf = new CWTextField(scr, cw_text_font());
+    lv_obj_set_pos(s_inet_rx_tf->obj(), 28, y);
+    lv_obj_set_size(s_inet_rx_tf->obj(), SCREEN_W - 32, rx_h);
+    y += rx_h + 2;
+
+    // ── TX text field (bottom half) ──────────────────────────────────
+    lv_obj_t* tx_lbl = lv_label_create(scr);
+    lv_label_set_text(tx_lbl, "TX");
+    lv_obj_set_style_text_font(tx_lbl, menu_font(), 0);
+    lv_obj_set_pos(tx_lbl, 4, y);
+
+    s_inet_tx_tf = new CWTextField(scr, cw_text_font());
+    lv_obj_set_pos(s_inet_tx_tf->obj(), 28, y);
+    lv_obj_set_size(s_inet_tx_tf->obj(), SCREEN_W - 32, SCREEN_H - y - 4);
+
+    return scr;
+}
+
 // ── Key event router ───────────────────────────────────────────────────────
 
 #ifdef BOARD_POCKETWROOM
@@ -1573,7 +1915,9 @@ static void route_ui(KeyEvent ev)
     switch (ev) {
         case KeyEvent::ENCODER_CW:
             s_enc_diff++;
-            if (s_active_mode != ActiveMode::NONE) {
+            // Skip WPM/volume when encoder is navigating an LVGL group
+            if (s_active_mode != ActiveMode::NONE &&
+                !lv_indev_get_group(s_enc_indev)) {
                 switch (s_encoder_mode) {
                     case EncoderMode::VOLUME:
                         s_settings.volume = std::min((int)s_settings.volume + 1, 20);
@@ -1596,7 +1940,8 @@ static void route_ui(KeyEvent ev)
             break;
         case KeyEvent::ENCODER_CCW:
             s_enc_diff--;
-            if (s_active_mode != ActiveMode::NONE) {
+            if (s_active_mode != ActiveMode::NONE &&
+                !lv_indev_get_group(s_enc_indev)) {
                 switch (s_encoder_mode) {
                     case EncoderMode::VOLUME:
                         s_settings.volume = (s_settings.volume > 0)
@@ -1674,7 +2019,9 @@ static void route(KeyEvent ev)
     switch (ev) {
         case KeyEvent::ENCODER_CW:
             s_enc_diff++;
-            if (s_active_mode != ActiveMode::NONE) {
+            // Skip WPM/volume when encoder is navigating an LVGL group
+            if (s_active_mode != ActiveMode::NONE &&
+                !lv_indev_get_group(s_enc_indev)) {
                 switch (s_encoder_mode) {
                     case EncoderMode::VOLUME:
                         s_settings.volume = std::min((int)s_settings.volume + 1, 20);
@@ -1697,7 +2044,8 @@ static void route(KeyEvent ev)
             break;
         case KeyEvent::ENCODER_CCW:
             s_enc_diff--;
-            if (s_active_mode != ActiveMode::NONE) {
+            if (s_active_mode != ActiveMode::NONE &&
+                !lv_indev_get_group(s_enc_indev)) {
                 switch (s_encoder_mode) {
                     case EncoderMode::VOLUME:
                         s_settings.volume = (s_settings.volume > 0)
@@ -2006,6 +2354,157 @@ static void app_ui_init(uint32_t rng_seed)
 #endif
 }
 
+// ── Internet CW network pump ──────────────────────────────────────────────
+// Called from app_ui_tick() when INTERNET_CW mode is active.
+// Drains TX timing ring buffer → codec → network send.
+// Polls RX from network → codec → RxCwPlayer for sidetone + decode.
+static void inet_cw_tick()
+{
+    if (!s_network || !s_network->cw_is_connected()) return;
+    unsigned long now = (unsigned long)app_millis();
+
+    // ── TX: drain timing ring buffer → codec → send ─────────────────────
+    TimingEvent ev;
+    static uint32_t last_down_ts = 0;
+    static bool     last_was_down = false;
+
+    while (s_timing_ringbuf.pop(ev)) {
+        if (ev.key_down) {
+            // If previous was also key-down (shouldn't happen), emit gap
+            if (last_was_down && last_down_ts > 0) {
+                int32_t gap = -(int32_t)(ev.timestamp_ms - last_down_ts);
+                if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+                    uint8_t pkt[CwComCodec::PACKET_SIZE];
+                    if (s_cwcom_codec->push_timing(gap, pkt))
+                        s_network->cw_send(pkt, CwComCodec::PACKET_SIZE);
+                }
+            }
+            last_down_ts = ev.timestamp_ms;
+            last_was_down = true;
+        } else {
+            // Key up: compute key-down duration
+            if (last_was_down && last_down_ts > 0) {
+                int32_t down_ms = (int32_t)(ev.timestamp_ms - last_down_ts);
+                if (down_ms < 1) down_ms = 1;
+
+                if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+                    uint8_t pkt[CwComCodec::PACKET_SIZE];
+                    if (s_cwcom_codec->push_timing(down_ms, pkt))
+                        s_network->cw_send(pkt, CwComCodec::PACKET_SIZE);
+                } else if (s_settings.inet_proto == 1 && s_mopp_codec) {
+                    // MOPP: classify as dit/dah
+                    unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
+                    if ((unsigned long)down_ms <= dit_ms * 2)
+                        s_mopp_codec->push_dit();
+                    else
+                        s_mopp_codec->push_dah();
+                }
+            }
+            last_was_down = false;
+            last_down_ts = ev.timestamp_ms;  // remember for gap computation
+        }
+    }
+
+    // ── TX: word-space flush ─────────────────────────────────────────────
+    // Reuse word-space detection: if keyer_word_pending just cleared
+    // (7-dit gap elapsed), flush partial CWCom packet or send MOPP word
+    if (!s_keyer_word_pending && last_was_down) {
+        unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
+        if (last_down_ts > 0 &&
+            (now - last_down_ts) > 7 * dit_ms) {
+            // Emit trailing gap + flush
+            int32_t gap = -(int32_t)(now - last_down_ts);
+            if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+                uint8_t pkt[CwComCodec::PACKET_SIZE];
+                if (s_cwcom_codec->push_timing(gap, pkt))
+                    s_network->cw_send(pkt, CwComCodec::PACKET_SIZE);
+                if (s_cwcom_codec->flush(pkt))
+                    s_network->cw_send(pkt, CwComCodec::PACKET_SIZE);
+            } else if (s_settings.inet_proto == 1 && s_mopp_codec) {
+                s_mopp_codec->push_word_gap();
+                uint8_t buf[32];
+                int len = s_mopp_codec->build_packet(buf, sizeof(buf));
+                if (len > 0)
+                    s_network->cw_send(buf, (size_t)len);
+            }
+            last_was_down = false;
+        }
+    }
+
+    // ── RX: poll network ────────────────────────────────────────────────
+    {
+        uint8_t buf[512];
+        int n = s_network->cw_receive(buf, sizeof(buf), 0);  // non-blocking
+        if (n > 0 && s_rx_player) {
+            if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+                // Dedup: MorseKOB server sends each packet twice
+                static int32_t last_rx_seq = -1;
+                if (n >= 496) {
+                    int32_t seq = (int32_t)((uint32_t)buf[136] |
+                                  ((uint32_t)buf[137]<<8) |
+                                  ((uint32_t)buf[138]<<16) |
+                                  ((uint32_t)buf[139]<<24));
+                    if (seq == last_rx_seq) goto rx_done;
+                    last_rx_seq = seq;
+                }
+                s_cwcom_codec->parse(buf, (size_t)n,
+                    [](int32_t ms_val) {
+                        // Filter latch/unlatch signals (|val| < 10ms)
+                        if (ms_val > -10 && ms_val < 10) return;
+                        if (s_rx_player) s_rx_player->push(ms_val);
+                    });
+            } else if (s_settings.inet_proto == 1 && s_mopp_codec) {
+                // MOPP parse → convert symbols to timing for RxCwPlayer
+                unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
+                s_mopp_codec->parse(buf, (size_t)n,
+                    [dit_ms](bool is_dit) {
+                        int32_t dur = is_dit ? (int32_t)dit_ms
+                                             : (int32_t)(dit_ms * 3);
+                        if (s_rx_player) {
+                            s_rx_player->push(dur);       // key-down
+                            s_rx_player->push(-(int32_t)dit_ms); // inter-element gap
+                        }
+                    },
+                    [dit_ms]() {
+                        // char gap: 3 dit total (already 1 dit from inter-element)
+                        if (s_rx_player)
+                            s_rx_player->push(-(int32_t)(dit_ms * 2));
+                    },
+                    [dit_ms]() {
+                        // word gap: 7 dit total
+                        if (s_rx_player)
+                            s_rx_player->push(-(int32_t)(dit_ms * 6));
+                    });
+            }
+        }
+    rx_done:;
+    }
+
+    // ── RX: playback tick (sidetone + decode) ───────────────────────────
+    if (s_rx_player) s_rx_player->tick();
+
+    // ── Keepalive every 10 s ────────────────────────────────────────────
+    if (now - s_inet_keepalive_t >= 10000UL) {
+        s_inet_keepalive_t = now;
+        if (s_settings.inet_proto == 0 && s_cwcom_codec) {
+            uint8_t buf[CwComCodec::SHORT_SIZE + CwComCodec::PACKET_SIZE];
+            int n = s_cwcom_codec->build_keepalive(buf);
+            // Send short CON packet, then ID packet
+            s_network->cw_send(buf, CwComCodec::SHORT_SIZE);
+            if (n > CwComCodec::SHORT_SIZE)
+                s_network->cw_send(buf + CwComCodec::SHORT_SIZE,
+                                   CwComCodec::PACKET_SIZE);
+        }
+        // MOPP keepalive: send empty packet (just header)
+        if (s_settings.inet_proto == 1 && s_mopp_codec) {
+            uint8_t buf[4];
+            int len = s_mopp_codec->build_packet(buf, sizeof(buf));
+            if (len > 0)
+                s_network->cw_send(buf, (size_t)len);
+        }
+    }
+}
+
 // ── CW engine + LVGL tick dispatch ────────────────────────────────────────
 // Call every loop iteration after polling and routing key events.
 static void app_ui_tick()
@@ -2114,7 +2613,8 @@ static void app_ui_tick()
     // ── Simulator: tick CW engine directly (single-threaded) ────────────
     if (s_active_mode == ActiveMode::KEYER ||
         s_active_mode == ActiveMode::ECHO ||
-        s_active_mode == ActiveMode::CHATBOT) {
+        s_active_mode == ActiveMode::CHATBOT ||
+        s_active_mode == ActiveMode::INTERNET_CW) {
         s_paddle->tick();
         s_keyer->tick();
         if (s_straight_keyer) s_straight_keyer->decode();
@@ -2133,6 +2633,8 @@ static void app_ui_tick()
                 s_chatbot->symbol_received(" ");
                 if (s_chatbot_oper_tf) s_chatbot_oper_tf->add_string(" ");
             }
+            if (s_active_mode == ActiveMode::INTERNET_CW && s_inet_tx_tf)
+                s_inet_tx_tf->add_string(" ");
             s_keyer_word_pending = false;
         }
     }
@@ -2165,5 +2667,8 @@ static void app_ui_tick()
             }
         }
     }
+    // Internet CW: network pump (TX drain + RX poll + keepalive)
+    if (s_active_mode == ActiveMode::INTERNET_CW)
+        inet_cw_tick();
     lv_timer_handler();
 }

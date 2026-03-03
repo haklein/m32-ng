@@ -77,4 +77,62 @@ int Esp32Network::wifi_scan(WifiNetwork* results, int max_results)
     return count;
 }
 
+// ── CW transport (UDP) ───────────────────────────────────────────────────────
+
+bool Esp32Network::cw_connect(CwProto proto, const char* target,
+                               uint16_t port)
+{
+    if (!wifi_is_connected() || !target) return false;
+    (void)proto;  // all CW transport uses UDP
+
+    // DNS resolve
+    IPAddress ip;
+    if (!WiFi.hostByName(target, ip)) return false;
+
+    // Bind local UDP socket (ephemeral port)
+    if (!udp_.begin(0)) return false;
+
+    cw_remote_ip_   = ip;
+    cw_remote_port_ = port;
+    cw_connected_   = true;
+    return true;
+}
+
+void Esp32Network::cw_disconnect()
+{
+    udp_.stop();
+    cw_connected_ = false;
+}
+
+bool Esp32Network::cw_send(const uint8_t* data, size_t len)
+{
+    if (!cw_connected_) return false;
+    udp_.beginPacket(cw_remote_ip_, cw_remote_port_);
+    udp_.write(data, len);
+    return udp_.endPacket() != 0;
+}
+
+int Esp32Network::cw_receive(uint8_t* buf, size_t len, uint32_t timeout_ms)
+{
+    if (!cw_connected_) return -1;
+
+    uint32_t start = millis();
+    do {
+        int pkt = udp_.parsePacket();
+        if (pkt > 0) {
+            int n = udp_.read(buf, len);
+            return n;
+        }
+        if (timeout_ms == 0) return 0;
+        delay(1);
+    } while (millis() - start < timeout_ms);
+
+    return 0;  // timeout
+}
+
+bool Esp32Network::cw_is_connected()
+{
+    return cw_connected_ && wifi_is_connected();
+}
+
 #endif // BOARD_POCKETWROOM
