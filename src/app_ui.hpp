@@ -585,7 +585,9 @@ static std::string content_phrase()
                            (int)(KOCH_ORDER_COUNT - 1));
         const char* order = KOCH_ORDERS[idx];
         int n = std::min((int)s_settings.koch_lesson, KOCH_MAX_LESSON);
-        return s_gen->random_chars_from_set(std::string(order, n), 5);
+        int glen = (int)s_settings.word_max_length;
+        if (glen <= 0) glen = 5;  // default group size when unlimited
+        return s_gen->random_chars_from_set(std::string(order, n), glen);
     }
     // Collect enabled content types
     int types[5]; int nt = 0;

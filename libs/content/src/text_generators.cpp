@@ -158,8 +158,8 @@ std::string TextGenerators::random_chars(int length, RandomOption option)
         e = 51; break;
     }
 
-    if (length > 6) {
-        length = rng_range(2, length - 3);
+    if (length > 5) {
+        length = rng_range(2, length + 1);  // vary group size, up to requested max
     }
 
     for (int i = 0; i < length; ++i) {
