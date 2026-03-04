@@ -2375,6 +2375,11 @@ static void app_ui_init(uint32_t rng_seed)
             // Session limit: auto-pause after N phrases
             if (s_settings.session_size > 0 &&
                 s_session_count >= (int)s_settings.session_size) {
+                // Flush the last played phrase to the display before pausing
+                if (s_gen_tf && !s_pending_gen_phrase.empty()) {
+                    s_gen_tf->add_string(s_pending_gen_phrase + " ");
+                    s_pending_gen_phrase.clear();
+                }
                 s_gen_paused = true;
                 s_trainer->set_idle();
                 return std::string();
