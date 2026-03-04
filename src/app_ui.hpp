@@ -40,7 +40,7 @@
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 13;
+    static constexpr uint8_t VERSION = 14;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -82,6 +82,8 @@ struct AppSettings {
     uint8_t  inet_proto     = 0;    // 0=CWCom, 1=MOPP
     uint16_t cwcom_wire     = 111;  // CWCom wire/channel number
     char     callsign[16]   = {};   // station callsign (empty = anonymous)
+    // VERSION 14 — session limit
+    uint8_t  session_size   = 0;    // 0=unlimited, 1-99 phrases per session
 };
 static AppSettings s_settings;
 
@@ -198,6 +200,7 @@ static MorseTrainer*   s_trainer    = nullptr;
 static TextGenerators* s_gen        = nullptr;
 static std::mt19937    s_rng;
 static bool            s_gen_paused = false;
+static int             s_session_count = 0;   // phrases generated in current session
 
 // ── Word-space timer for CW keyer ─────────────────────────────────────────
 // Tracks last element END (not character decode) so the 7-dit gap is measured
@@ -644,6 +647,7 @@ static void push_mode_screen(int idx)
         enter_cb = []() {
             s_active_mode = ActiveMode::GENERATOR;
             s_gen_paused  = false;
+            s_session_count = 0;
             s_trainer->set_state(MorseTrainer::TrainerState::Player);
             s_trainer->set_playing();
             lv_indev_set_group(s_enc_indev, nullptr);
@@ -661,6 +665,7 @@ static void push_mode_screen(int idx)
         ns = build_echo_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::ECHO;
+            s_session_count = 0;
 #ifdef BOARD_POCKETWROOM
             s_cw_engine_active = true;
 #endif
@@ -1395,12 +1400,11 @@ static lv_obj_t* build_content_screen()
     if (s_content_group) lv_group_del(s_content_group);
     s_content_group = lv_group_create();
 
-    const bool compact       = (SCREEN_H <= 200);
-    const lv_coord_t ROW_H   = compact ? 36 : 50;
-    const lv_coord_t COL2_X  = compact ? SCREEN_W / 2 : SCREEN_W / 2 + 20;
-    const lv_coord_t LBL_X   = compact ? 8 : 16;
-    const lv_coord_t LBL_OFF = compact ? 8 : 14;
-    const lv_coord_t CTL_OFF = compact ? 4 : 8;
+    const lv_coord_t ROW_H   = 30;
+    const lv_coord_t LBL_X   = 8;
+    const lv_coord_t CTL_X   = 140;   // controls start here
+    const lv_coord_t CTL_W   = 130;
+    const lv_coord_t SPN_W   = 80;
 
     // Scrollable container below the status bar
     lv_obj_t* cont = lv_obj_create(scr);
@@ -1410,8 +1414,14 @@ static lv_obj_t* build_content_screen()
     lv_obj_set_style_pad_all(cont, 0, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(cont, LV_DIR_VER);
 
-    const lv_coord_t START_Y = compact ? 4 : 10;
+    int row = 0;
+
+    auto row_y = [&](int r) -> lv_coord_t { return 4 + r * ROW_H; };
+    auto lbl_y = [&](int r) -> lv_coord_t { return row_y(r) + 7; };
+    auto ctl_y = [&](int r) -> lv_coord_t { return row_y(r) + 2; };
 
     auto make_cb = [&](const char* text, bool checked,
                        lv_coord_t x, lv_coord_t y) -> lv_obj_t* {
@@ -1423,19 +1433,21 @@ static lv_obj_t* build_content_screen()
         return cb;
     };
 
-    // Row 0: Words | Abbrevs
-    lv_obj_t* cb_words = make_cb("Words",     s_settings.cont_words,
-                                 LBL_X, START_Y + 0 * ROW_H);
-    lv_obj_t* cb_abbr  = make_cb("Abbrevs",   s_settings.cont_abbrevs,
-                                 COL2_X, START_Y + 0 * ROW_H);
-    // Row 1: Callsigns | Chars | QSO
+    // Row 0: Words | Abbreviations | Callsigns
+    lv_obj_t* cb_words = make_cb("Words", s_settings.cont_words,
+                                 LBL_X, lbl_y(row));
+    lv_obj_t* cb_abbr  = make_cb("Abbreviations", s_settings.cont_abbrevs,
+                                 100, lbl_y(row));
     lv_obj_t* cb_calls = make_cb("Callsigns", s_settings.cont_calls,
-                                 LBL_X, START_Y + 1 * ROW_H);
-    lv_obj_t* cb_chars = make_cb("Chars",     s_settings.cont_chars,
-                                 COL2_X, START_Y + 1 * ROW_H);
-    const lv_coord_t COL3_X = compact ? 220 : SCREEN_W * 3 / 4;
-    lv_obj_t* cb_qso   = make_cb("QSO",       s_settings.cont_qso,
-                                 COL3_X, START_Y + 1 * ROW_H);
+                                 230, lbl_y(row));
+    row++;
+
+    // Row 1: Characters | QSO
+    lv_obj_t* cb_chars = make_cb("Characters", s_settings.cont_chars,
+                                 LBL_X, lbl_y(row));
+    lv_obj_t* cb_qso   = make_cb("QSO", s_settings.cont_qso,
+                                 100, lbl_y(row));
+    row++;
 
     lv_obj_add_event_cb(cb_words, [](lv_event_t* e) {
         s_settings.cont_words = (lv_obj_get_state(lv_event_get_target_obj(e))
@@ -1463,102 +1475,122 @@ static lv_obj_t* build_content_screen()
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Row 2: Chars group dropdown  |  Koch spinbox
-    const lv_coord_t R2_Y = START_Y + 2 * ROW_H;
-
+    // Row 2: Character Set
     lv_obj_t* cg_lbl = lv_label_create(cont);
-    lv_label_set_text(cg_lbl, "Chars:");
-    lv_obj_set_pos(cg_lbl, LBL_X, R2_Y + LBL_OFF);
+    lv_label_set_text(cg_lbl, "Character Set");
+    lv_obj_set_pos(cg_lbl, LBL_X, lbl_y(row));
 
     lv_obj_t* cg_dd = lv_dropdown_create(cont);
     lv_dropdown_set_options(cg_dd, "Alpha\nAlpha+Num\nAll CW");
     lv_dropdown_set_selected(cg_dd, s_settings.chars_group);
-    lv_obj_set_width(cg_dd, compact ? 110 : 140);
-    lv_obj_set_pos(cg_dd, LBL_X + (compact ? 48 : 60), R2_Y + CTL_OFF);
+    lv_obj_set_width(cg_dd, CTL_W);
+    lv_obj_set_pos(cg_dd, CTL_X, ctl_y(row));
     lv_group_add_obj(s_content_group, cg_dd);
     lv_obj_add_event_cb(cg_dd, [](lv_event_t* e) {
         s_settings.chars_group = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
+    row++;
 
+    // Row 3: Koch Lesson
     lv_obj_t* kl_lbl = lv_label_create(cont);
-    lv_label_set_text(kl_lbl, compact ? "Koch:" : "Koch (0=off):");
-    lv_obj_set_pos(kl_lbl, COL2_X, R2_Y + LBL_OFF);
+    lv_label_set_text(kl_lbl, "Koch Lesson (0=off)");
+    lv_obj_set_pos(kl_lbl, LBL_X, lbl_y(row));
 
     lv_obj_t* koch_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(koch_spn, 0, KOCH_MAX_LESSON);
     lv_spinbox_set_digit_count(koch_spn, 2);
     lv_spinbox_set_value(koch_spn, s_settings.koch_lesson);
-    lv_obj_set_width(koch_spn, compact ? 80 : 100);
-    lv_obj_set_pos(koch_spn, COL2_X + (compact ? 50 : 110), R2_Y + CTL_OFF);
+    lv_obj_set_width(koch_spn, SPN_W);
+    lv_obj_set_pos(koch_spn, CTL_X, ctl_y(row));
     lv_group_add_obj(s_content_group, koch_spn);
     lv_obj_add_event_cb(koch_spn, [](lv_event_t* e) {
         s_settings.koch_lesson = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
+    row++;
 
-    // Row 3: Koch order dropdown  |  Max length spinbox
-    const lv_coord_t R3_Y = START_Y + 3 * ROW_H;
-
+    // Row 4: Koch Order
     lv_obj_t* ko_lbl = lv_label_create(cont);
-    lv_label_set_text(ko_lbl, "Order:");
-    lv_obj_set_pos(ko_lbl, LBL_X, R3_Y + LBL_OFF);
+    lv_label_set_text(ko_lbl, "Koch Order");
+    lv_obj_set_pos(ko_lbl, LBL_X, lbl_y(row));
 
     lv_obj_t* ko_dd = lv_dropdown_create(cont);
     lv_dropdown_set_options(ko_dd, "LCWO\nMorserino\nCW Academy\nLICW");
     lv_dropdown_set_selected(ko_dd, std::min((uint8_t)(KOCH_ORDER_COUNT - 1),
                                              s_settings.koch_order));
-    lv_obj_set_width(ko_dd, compact ? 100 : 130);
-    lv_obj_set_pos(ko_dd, LBL_X + (compact ? 48 : 60), R3_Y + CTL_OFF);
+    lv_obj_set_width(ko_dd, CTL_W);
+    lv_obj_set_pos(ko_dd, CTL_X, ctl_y(row));
     lv_group_add_obj(s_content_group, ko_dd);
     lv_obj_add_event_cb(ko_dd, [](lv_event_t* e) {
         s_settings.koch_order = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
+    row++;
 
+    // Row 5: Max Length
     lv_obj_t* ml_lbl = lv_label_create(cont);
-    lv_label_set_text(ml_lbl, compact ? "Len:" : "Length:");
-    lv_obj_set_pos(ml_lbl, COL2_X, R3_Y + LBL_OFF);
+    lv_label_set_text(ml_lbl, "Max Length");
+    lv_obj_set_pos(ml_lbl, LBL_X, lbl_y(row));
 
     lv_obj_t* ml_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(ml_spn, 0, 15);
     lv_spinbox_set_digit_count(ml_spn, 2);
     lv_spinbox_set_value(ml_spn, s_settings.word_max_length);
-    lv_obj_set_width(ml_spn, compact ? 80 : 100);
-    lv_obj_set_pos(ml_spn, COL2_X + (compact ? 40 : 70), R3_Y + CTL_OFF);
+    lv_obj_set_width(ml_spn, SPN_W);
+    lv_obj_set_pos(ml_spn, CTL_X, ctl_y(row));
     lv_group_add_obj(s_content_group, ml_spn);
     lv_obj_add_event_cb(ml_spn, [](lv_event_t* e) {
         s_settings.word_max_length = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
+    row++;
 
-    // Row 4: QSO max words spinbox
-    const lv_coord_t R4_Y = START_Y + 4 * ROW_H;
-
+    // Row 6: QSO Words
     lv_obj_t* qw_lbl = lv_label_create(cont);
-    lv_label_set_text(qw_lbl, compact ? "QSO wds:" : "QSO words:");
-    lv_obj_set_pos(qw_lbl, LBL_X, R4_Y + LBL_OFF);
+    lv_label_set_text(qw_lbl, "QSO Words");
+    lv_obj_set_pos(qw_lbl, LBL_X, lbl_y(row));
 
     lv_obj_t* qw_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(qw_spn, 0, 9);
     lv_spinbox_set_digit_count(qw_spn, 1);
     lv_spinbox_set_value(qw_spn, s_settings.qso_max_words);
-    lv_obj_set_width(qw_spn, compact ? 80 : 100);
-    lv_obj_set_pos(qw_spn, LBL_X + (compact ? 68 : 90), R4_Y + CTL_OFF);
+    lv_obj_set_width(qw_spn, SPN_W);
+    lv_obj_set_pos(qw_spn, CTL_X, ctl_y(row));
     lv_group_add_obj(s_content_group, qw_spn);
     lv_obj_add_event_cb(qw_spn, [](lv_event_t* e) {
         s_settings.qso_max_words = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
+    row++;
+
+    // Row 7: Session Size
+    lv_obj_t* ss_lbl = lv_label_create(cont);
+    lv_label_set_text(ss_lbl, "Session Size (0=off)");
+    lv_obj_set_pos(ss_lbl, LBL_X, lbl_y(row));
+
+    lv_obj_t* ss_spn = lv_spinbox_create(cont);
+    lv_spinbox_set_range(ss_spn, 0, 99);
+    lv_spinbox_set_digit_count(ss_spn, 2);
+    lv_spinbox_set_value(ss_spn, s_settings.session_size);
+    lv_obj_set_width(ss_spn, SPN_W);
+    lv_obj_set_pos(ss_spn, CTL_X, ctl_y(row));
+    lv_group_add_obj(s_content_group, ss_spn);
+    lv_obj_add_event_cb(ss_spn, [](lv_event_t* e) {
+        s_settings.session_size = (uint8_t)lv_spinbox_get_value(
+            lv_event_get_target_obj(e));
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    row++;
 
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(cont);
-    lv_obj_set_pos(hint, LBL_X, START_Y + 5 * ROW_H);
+    lv_obj_set_pos(hint, LBL_X, lbl_y(row));
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=toggle/edit    E=back");
 #endif
 
@@ -2036,7 +2068,7 @@ static void route_ui(KeyEvent ev)
                 s_active_mode == ActiveMode::CHATBOT) {
                 s_gen_paused = !s_gen_paused;
                 if (s_gen_paused) s_trainer->set_idle();
-                else              s_trainer->set_playing();
+                else { s_session_count = 0; s_trainer->set_playing(); }
             } else if (s_active_mode == ActiveMode::INVADERS && s_invaders_game) {
                 s_invaders_game->set_paused(!s_invaders_game->paused());
             } else {
@@ -2142,7 +2174,7 @@ static void route(KeyEvent ev)
                 s_active_mode == ActiveMode::CHATBOT) {
                 s_gen_paused = !s_gen_paused;
                 if (s_gen_paused) s_trainer->set_idle();
-                else              s_trainer->set_playing();
+                else { s_session_count = 0; s_trainer->set_playing(); }
             } else if (s_active_mode == ActiveMode::INVADERS && s_invaders_game) {
                 s_invaders_game->set_paused(!s_invaders_game->paused());
             } else {
@@ -2340,7 +2372,15 @@ static void app_ui_init(uint32_t rng_seed)
                 s_chatbot_tx_active = false;
                 return std::string();
             }
+            // Session limit: auto-pause after N phrases
+            if (s_settings.session_size > 0 &&
+                s_session_count >= (int)s_settings.session_size) {
+                s_gen_paused = true;
+                s_trainer->set_idle();
+                return std::string();
+            }
             std::string phrase = content_phrase();
+            if (s_settings.session_size > 0) s_session_count++;
             // Generator: deferred — show the just-finished word, queue the new one
             if (s_gen_tf) {
                 if (!s_pending_gen_phrase.empty())
