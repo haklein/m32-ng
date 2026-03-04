@@ -1,0 +1,7 @@
+{
+    "name": "games",
+    "version": "1.0.0",
+    "description": "CW training games for Morserino-32 NG",
+    "frameworks": "*",
+    "platforms": "*"
+}

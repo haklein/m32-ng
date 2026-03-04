@@ -34,6 +34,7 @@
 #include "cwcom_codec.h"
 #include "mopp_codec.h"
 #include "rx_cw_player.h"
+#include "cw_invaders.h"
 
 // content_y() removed — use content_y() below (depends on font setting).
 
@@ -107,7 +108,7 @@ static lv_coord_t content_y()
 }
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
-enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT, INTERNET_CW };
+enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT, INTERNET_CW, INVADERS };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── HAL pointers (assigned by platform before app_ui_init) ────────────────
@@ -153,6 +154,15 @@ static RxCwPlayer*   s_rx_player    = nullptr;
 static CWTextField*  s_inet_rx_tf   = nullptr;
 static CWTextField*  s_inet_tx_tf   = nullptr;
 static unsigned long s_inet_keepalive_t = 0;  // last keepalive sent (ms)
+
+// ── CW Invaders game ─────────────────────────────────────────────────────
+static CwInvaders* s_invaders_game = nullptr;
+static lv_obj_t*   s_inv_score_lbl = nullptr;
+static lv_obj_t*   s_inv_lives_lbl = nullptr;
+static lv_obj_t*   s_inv_level_lbl = nullptr;
+static lv_obj_t*   s_inv_input_lbl = nullptr;
+static lv_obj_t*   s_inv_wpm_lbl  = nullptr;
+static lv_obj_t*   s_inv_gameover_lbl = nullptr;
 
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
@@ -272,14 +282,20 @@ static unsigned long s_fn_last_press_t       = 0;
 static bool          s_fn_pending            = false;
 static constexpr unsigned long FN_DOUBLE_MS  = 400;
 
+static void update_invaders_hud();  // forward decl
+
 static void update_status_bar_info()
 {
-    if (!s_active_sb) return;
-    switch (s_encoder_mode) {
-        case EncoderMode::WPM:    s_active_sb->set_wpm(s_settings.wpm); break;
-        case EncoderMode::VOLUME: s_active_sb->set_volume(s_settings.volume); break;
-        case EncoderMode::SCROLL: s_active_sb->set_scroll(); break;
+    if (s_active_sb) {
+        switch (s_encoder_mode) {
+            case EncoderMode::WPM:    s_active_sb->set_wpm(s_settings.wpm); break;
+            case EncoderMode::VOLUME: s_active_sb->set_volume(s_settings.volume); break;
+            case EncoderMode::SCROLL: s_active_sb->set_scroll(); break;
+        }
     }
+    // Invaders mode: WPM is part of the combined HUD label
+    if (s_inv_score_lbl && s_encoder_mode == EncoderMode::WPM)
+        update_invaders_hud();
 }
 
 // Enable/disable auto-scroll on all active CW text fields.
@@ -376,7 +392,8 @@ static bool cw_mode_active()
     return s_active_mode == ActiveMode::KEYER ||
            s_active_mode == ActiveMode::ECHO ||
            s_active_mode == ActiveMode::CHATBOT ||
-           s_active_mode == ActiveMode::INTERNET_CW;
+           s_active_mode == ActiveMode::INTERNET_CW ||
+           s_active_mode == ActiveMode::INVADERS;
 }
 
 // ── Forward declarations ───────────────────────────────────────────────────
@@ -389,6 +406,8 @@ static lv_obj_t* build_settings_screen();
 static lv_obj_t* build_content_screen();
 static lv_obj_t* build_wifi_screen();
 static lv_obj_t* build_inet_cw_screen();
+static lv_obj_t* build_invaders_screen();
+static void      update_invaders_hud();
 static void      inet_cw_disconnect();
 static void      apply_settings();
 static std::string content_phrase();
@@ -511,6 +530,21 @@ static void on_letter_decoded(const std::string& letter)
         if (!s_inet_tx_tf || letter == " ") return;
         s_inet_tx_tf->add_string(letter);
         s_keyer_word_pending = true;
+    } else if (s_active_mode == ActiveMode::INVADERS) {
+        if (!s_invaders_game || letter == " ") return;
+        bool hit = s_invaders_game->try_match(letter);
+        // Show keyed letter in input strip
+        if (s_inv_input_lbl)
+            lv_label_set_text(s_inv_input_lbl, letter.c_str());
+        update_invaders_hud();
+        // Show game over with score
+        if (s_invaders_game->game_over() && s_inv_gameover_lbl) {
+            char go[32];
+            snprintf(go, sizeof(go), "GAME OVER\n%d", s_invaders_game->score());
+            lv_label_set_text(s_inv_gameover_lbl, go);
+            lv_obj_remove_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+        (void)hit;
     }
 }
 
@@ -724,8 +758,8 @@ static void push_mode_screen(int idx)
             s_wifi_status_lbl = nullptr;
             delete s_active_sb; s_active_sb = nullptr;
         };
-    } else {
-        // idx == 7: Internet CW
+    } else if (idx == 7) {
+        // Internet CW
         ns = build_inet_cw_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::INTERNET_CW;
@@ -765,6 +799,35 @@ static void push_mode_screen(int idx)
             if (!s_inet_cw_active) {
                 delete s_active_sb; s_active_sb = nullptr;
             }
+        };
+    } else {
+        // idx == 8: CW Invaders
+        ns = build_invaders_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::INVADERS;
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = true;
+#endif
+            lv_indev_set_group(s_enc_indev, nullptr);
+        };
+        leave_cb = []() {
+            if (s_invaders_game) {
+                s_invaders_game->stop();
+                delete s_invaders_game;
+                s_invaders_game = nullptr;
+            }
+            s_inv_score_lbl = nullptr;
+            s_inv_lives_lbl = nullptr;
+            s_inv_level_lbl = nullptr;
+            s_inv_input_lbl = nullptr;
+            s_inv_wpm_lbl   = nullptr;
+            s_inv_gameover_lbl = nullptr;
+#ifdef BOARD_POCKETWROOM
+            s_cw_engine_active = false;
+#endif
+            s_active_mode = ActiveMode::NONE;
+            s_audio->tone_off();
+            delete s_active_sb; s_active_sb = nullptr;
         };
     }
 
@@ -817,8 +880,9 @@ static lv_obj_t* build_main_menu()
         { LV_SYMBOL_SETTINGS, "Settings"      },
         { LV_SYMBOL_WIFI,     "WiFi Setup"    },
         { LV_SYMBOL_WIFI,     "Internet CW"   },
+        { LV_SYMBOL_SHUFFLE,  "CW Invaders"   },
     };
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 9; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_obj_set_style_text_font(btn, menu_font(), 0);
         lv_group_add_obj(s_menu_group, btn);
@@ -1971,6 +2035,8 @@ static void route_ui(KeyEvent ev)
                 s_gen_paused = !s_gen_paused;
                 if (s_gen_paused) s_trainer->set_idle();
                 else              s_trainer->set_playing();
+            } else if (s_active_mode == ActiveMode::INVADERS && s_invaders_game) {
+                s_invaders_game->set_paused(!s_invaders_game->paused());
             } else {
                 s_enc_press_frames = 2;
             }
@@ -2075,6 +2141,8 @@ static void route(KeyEvent ev)
                 s_gen_paused = !s_gen_paused;
                 if (s_gen_paused) s_trainer->set_idle();
                 else              s_trainer->set_playing();
+            } else if (s_active_mode == ActiveMode::INVADERS && s_invaders_game) {
+                s_invaders_game->set_paused(!s_invaders_game->paused());
             } else {
                 s_enc_press_frames = 2;
             }
@@ -2354,6 +2422,123 @@ static void app_ui_init(uint32_t rng_seed)
 #endif
 }
 
+// ── Screen: CW Invaders ──────────────────────────────────────────────────
+
+static void update_invaders_hud()
+{
+    if (!s_invaders_game) return;
+    char buf[16];
+    if (s_inv_level_lbl) {
+        snprintf(buf, sizeof(buf), "Lv%d ", s_invaders_game->level());
+        lv_label_set_text(s_inv_level_lbl, buf);
+    }
+    if (s_inv_lives_lbl) {
+        snprintf(buf, sizeof(buf), "x%d ", s_invaders_game->lives());
+        lv_label_set_text(s_inv_lives_lbl, buf);
+        lv_obj_align_to(s_inv_lives_lbl, s_inv_level_lbl,
+                        LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+    }
+    if (s_inv_score_lbl) {
+        snprintf(buf, sizeof(buf), "%04d ", s_invaders_game->score());
+        lv_label_set_text(s_inv_score_lbl, buf);
+        lv_obj_align_to(s_inv_score_lbl, s_inv_lives_lbl,
+                        LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+    }
+    if (s_inv_wpm_lbl) {
+        snprintf(buf, sizeof(buf), "%dWPM", s_settings.wpm);
+        lv_label_set_text(s_inv_wpm_lbl, buf);
+        lv_obj_align_to(s_inv_wpm_lbl, s_inv_score_lbl,
+                        LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+    }
+}
+
+static lv_obj_t* build_invaders_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // No StatusBar — maximise game area; all info in bottom strip
+    delete s_active_sb;
+    s_active_sb = nullptr;
+
+    lv_coord_t y0 = 0;
+
+#ifdef NATIVE_BUILD
+    lv_obj_t* hint = lv_label_create(scr);
+    lv_label_set_text(hint, "Space=DIT  Enter=DAH  \xe2\x86\x91/\xe2\x86\x93=WPM  E=back");
+    lv_obj_set_style_text_font(hint, ui_font(), 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 0);
+    y0 = 18;
+#endif
+
+    // Game area — characters scroll here (maximised)
+    lv_coord_t bottom_h = lv_font_get_line_height(ui_font()) + 4;
+    lv_obj_t* game_area = lv_obj_create(scr);
+    lv_obj_clear_flag(game_area, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(game_area, lv_color_hex(0x111122), 0);
+    lv_obj_set_style_bg_opa(game_area, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(game_area, 0, 0);
+    lv_obj_set_style_pad_all(game_area, 0, 0);
+    lv_obj_set_style_radius(game_area, 0, 0);
+    lv_coord_t game_h = SCREEN_H - y0 - bottom_h;
+    lv_obj_set_size(game_area, SCREEN_W, game_h);
+    lv_obj_set_pos(game_area, 0, y0);
+
+    // Bottom strip: chained colored labels (each positioned relative to previous)
+    s_inv_level_lbl = lv_label_create(scr);
+    lv_label_set_text(s_inv_level_lbl, "Lv1 ");
+    lv_obj_set_style_text_font(s_inv_level_lbl, ui_font(), 0);
+    lv_obj_set_style_text_color(s_inv_level_lbl, lv_color_hex(0x88FF88), 0);
+    lv_obj_align(s_inv_level_lbl, LV_ALIGN_BOTTOM_LEFT, 4, 0);
+
+    s_inv_lives_lbl = lv_label_create(scr);
+    lv_label_set_text(s_inv_lives_lbl, "x3 ");
+    lv_obj_set_style_text_font(s_inv_lives_lbl, ui_font(), 0);
+    lv_obj_set_style_text_color(s_inv_lives_lbl, lv_color_hex(0xFF4444), 0);
+    lv_obj_align_to(s_inv_lives_lbl, s_inv_level_lbl,
+                    LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+
+    s_inv_score_lbl = lv_label_create(scr);
+    lv_label_set_text(s_inv_score_lbl, "0000 ");
+    lv_obj_set_style_text_font(s_inv_score_lbl, ui_font(), 0);
+    lv_obj_set_style_text_color(s_inv_score_lbl, lv_color_hex(0xFFFF00), 0);
+    lv_obj_align_to(s_inv_score_lbl, s_inv_lives_lbl,
+                    LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+
+    {
+        char wbuf[12];
+        snprintf(wbuf, sizeof(wbuf), "%dWPM", s_settings.wpm);
+        s_inv_wpm_lbl = lv_label_create(scr);
+        lv_label_set_text(s_inv_wpm_lbl, wbuf);
+        lv_obj_set_style_text_font(s_inv_wpm_lbl, ui_font(), 0);
+        lv_obj_set_style_text_color(s_inv_wpm_lbl, lv_color_hex(0xCCCCCC), 0);
+        lv_obj_align_to(s_inv_wpm_lbl, s_inv_score_lbl,
+                        LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+    }
+
+    s_inv_input_lbl = lv_label_create(scr);
+    lv_label_set_text(s_inv_input_lbl, "");
+    lv_obj_set_style_text_font(s_inv_input_lbl, ui_font(), 0);
+    lv_obj_set_style_text_color(s_inv_input_lbl, lv_color_hex(0x88CCFF), 0);
+    lv_obj_align(s_inv_input_lbl, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
+
+    // Game-over label (hidden initially)
+    s_inv_gameover_lbl = lv_label_create(game_area);
+    lv_label_set_text(s_inv_gameover_lbl, "GAME OVER");
+    lv_obj_set_style_text_font(s_inv_gameover_lbl, cw_text_font(), 0);
+    lv_obj_set_style_text_color(s_inv_gameover_lbl, lv_color_hex(0xFF4444), 0);
+    lv_obj_set_style_text_align(s_inv_gameover_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_inv_gameover_lbl);
+    lv_obj_add_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
+
+    // Create game instance
+    s_invaders_game = new CwInvaders(game_area, cw_text_font(),
+                                     s_rng, app_millis);
+    s_invaders_game->start();
+
+    return scr;
+}
+
 // ── Internet CW network pump ──────────────────────────────────────────────
 // Called from app_ui_tick() when INTERNET_CW mode is active.
 // Drains TX timing ring buffer → codec → network send.
@@ -2614,7 +2799,8 @@ static void app_ui_tick()
     if (s_active_mode == ActiveMode::KEYER ||
         s_active_mode == ActiveMode::ECHO ||
         s_active_mode == ActiveMode::CHATBOT ||
-        s_active_mode == ActiveMode::INTERNET_CW) {
+        s_active_mode == ActiveMode::INTERNET_CW ||
+        s_active_mode == ActiveMode::INVADERS) {
         s_paddle->tick();
         s_keyer->tick();
         if (s_straight_keyer) s_straight_keyer->decode();
@@ -2670,5 +2856,18 @@ static void app_ui_tick()
     // Internet CW: network pump (TX drain + RX poll + keepalive)
     if (s_active_mode == ActiveMode::INTERNET_CW)
         inet_cw_tick();
+
+    // CW Invaders: game tick
+    if (s_active_mode == ActiveMode::INVADERS && s_invaders_game) {
+        s_invaders_game->tick();
+        update_invaders_hud();
+        if (s_invaders_game->game_over() && s_inv_gameover_lbl) {
+            char go[32];
+            snprintf(go, sizeof(go), "GAME OVER\n%d", s_invaders_game->score());
+            lv_label_set_text(s_inv_gameover_lbl, go);
+            lv_obj_remove_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
     lv_timer_handler();
 }
