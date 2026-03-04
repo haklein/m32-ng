@@ -1400,7 +1400,8 @@ static lv_obj_t* build_content_screen()
     if (s_content_group) lv_group_del(s_content_group);
     s_content_group = lv_group_create();
 
-    const lv_coord_t ROW_H   = 30;
+    const lv_coord_t CB_ROW  = 24;    // checkbox rows (compact)
+    const lv_coord_t CTL_ROW = 36;   // control rows (need room for dropdowns)
     const lv_coord_t LBL_X   = 8;
     const lv_coord_t CTL_X   = 140;   // controls start here
     const lv_coord_t CTL_W   = 130;
@@ -1417,37 +1418,25 @@ static lv_obj_t* build_content_screen()
     lv_obj_add_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(cont, LV_DIR_VER);
 
-    int row = 0;
+    lv_coord_t cur_y = 4;  // running Y position
 
-    auto row_y = [&](int r) -> lv_coord_t { return 4 + r * ROW_H; };
-    auto lbl_y = [&](int r) -> lv_coord_t { return row_y(r) + 7; };
-    auto ctl_y = [&](int r) -> lv_coord_t { return row_y(r) + 2; };
-
-    auto make_cb = [&](const char* text, bool checked,
-                       lv_coord_t x, lv_coord_t y) -> lv_obj_t* {
+    auto make_cb = [&](const char* text, bool checked) -> lv_obj_t* {
         lv_obj_t* cb = lv_checkbox_create(cont);
         lv_checkbox_set_text(cb, text);
         if (checked) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        lv_obj_set_pos(cb, x, y);
+        lv_obj_set_pos(cb, LBL_X, cur_y);
         lv_group_add_obj(s_content_group, cb);
+        cur_y += CB_ROW;
         return cb;
     };
 
-    // Row 0: Words | Abbreviations | Callsigns
-    lv_obj_t* cb_words = make_cb("Words", s_settings.cont_words,
-                                 LBL_X, lbl_y(row));
-    lv_obj_t* cb_abbr  = make_cb("Abbreviations", s_settings.cont_abbrevs,
-                                 100, lbl_y(row));
-    lv_obj_t* cb_calls = make_cb("Callsigns", s_settings.cont_calls,
-                                 230, lbl_y(row));
-    row++;
-
-    // Row 1: Characters | QSO
-    lv_obj_t* cb_chars = make_cb("Characters", s_settings.cont_chars,
-                                 LBL_X, lbl_y(row));
-    lv_obj_t* cb_qso   = make_cb("QSO", s_settings.cont_qso,
-                                 100, lbl_y(row));
-    row++;
+    // Checkboxes — one per row
+    lv_obj_t* cb_words = make_cb("Words",         s_settings.cont_words);
+    lv_obj_t* cb_abbr  = make_cb("Abbreviations", s_settings.cont_abbrevs);
+    lv_obj_t* cb_calls = make_cb("Callsigns",     s_settings.cont_calls);
+    lv_obj_t* cb_chars = make_cb("Characters",    s_settings.cont_chars);
+    lv_obj_t* cb_qso   = make_cb("QSO",           s_settings.cont_qso);
+    cur_y += 4;  // extra gap before controls
 
     lv_obj_add_event_cb(cb_words, [](lv_event_t* e) {
         s_settings.cont_words = (lv_obj_get_state(lv_event_get_target_obj(e))
@@ -1475,122 +1464,122 @@ static lv_obj_t* build_content_screen()
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Row 2: Character Set
+    // Character Set
     lv_obj_t* cg_lbl = lv_label_create(cont);
     lv_label_set_text(cg_lbl, "Character Set");
-    lv_obj_set_pos(cg_lbl, LBL_X, lbl_y(row));
+    lv_obj_set_pos(cg_lbl, LBL_X, cur_y + 7);
 
     lv_obj_t* cg_dd = lv_dropdown_create(cont);
     lv_dropdown_set_options(cg_dd, "Alpha\nAlpha+Num\nAll CW");
     lv_dropdown_set_selected(cg_dd, s_settings.chars_group);
     lv_obj_set_width(cg_dd, CTL_W);
-    lv_obj_set_pos(cg_dd, CTL_X, ctl_y(row));
+    lv_obj_set_pos(cg_dd, CTL_X, cur_y + 2);
     lv_group_add_obj(s_content_group, cg_dd);
     lv_obj_add_event_cb(cg_dd, [](lv_event_t* e) {
         s_settings.chars_group = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    row++;
+    cur_y += CTL_ROW;
 
-    // Row 3: Koch Lesson
+    // Koch Lesson
     lv_obj_t* kl_lbl = lv_label_create(cont);
     lv_label_set_text(kl_lbl, "Koch Lesson (0=off)");
-    lv_obj_set_pos(kl_lbl, LBL_X, lbl_y(row));
+    lv_obj_set_pos(kl_lbl, LBL_X, cur_y + 7);
 
     lv_obj_t* koch_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(koch_spn, 0, KOCH_MAX_LESSON);
     lv_spinbox_set_digit_count(koch_spn, 2);
     lv_spinbox_set_value(koch_spn, s_settings.koch_lesson);
     lv_obj_set_width(koch_spn, SPN_W);
-    lv_obj_set_pos(koch_spn, CTL_X, ctl_y(row));
+    lv_obj_set_pos(koch_spn, CTL_X, cur_y + 2);
     lv_group_add_obj(s_content_group, koch_spn);
     lv_obj_add_event_cb(koch_spn, [](lv_event_t* e) {
         s_settings.koch_lesson = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    row++;
+    cur_y += CTL_ROW;
 
-    // Row 4: Koch Order
+    // Koch Order
     lv_obj_t* ko_lbl = lv_label_create(cont);
     lv_label_set_text(ko_lbl, "Koch Order");
-    lv_obj_set_pos(ko_lbl, LBL_X, lbl_y(row));
+    lv_obj_set_pos(ko_lbl, LBL_X, cur_y + 7);
 
     lv_obj_t* ko_dd = lv_dropdown_create(cont);
     lv_dropdown_set_options(ko_dd, "LCWO\nMorserino\nCW Academy\nLICW");
     lv_dropdown_set_selected(ko_dd, std::min((uint8_t)(KOCH_ORDER_COUNT - 1),
                                              s_settings.koch_order));
     lv_obj_set_width(ko_dd, CTL_W);
-    lv_obj_set_pos(ko_dd, CTL_X, ctl_y(row));
+    lv_obj_set_pos(ko_dd, CTL_X, cur_y + 2);
     lv_group_add_obj(s_content_group, ko_dd);
     lv_obj_add_event_cb(ko_dd, [](lv_event_t* e) {
         s_settings.koch_order = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    row++;
+    cur_y += CTL_ROW;
 
-    // Row 5: Max Length
+    // Max Length
     lv_obj_t* ml_lbl = lv_label_create(cont);
     lv_label_set_text(ml_lbl, "Max Length");
-    lv_obj_set_pos(ml_lbl, LBL_X, lbl_y(row));
+    lv_obj_set_pos(ml_lbl, LBL_X, cur_y + 7);
 
     lv_obj_t* ml_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(ml_spn, 0, 15);
     lv_spinbox_set_digit_count(ml_spn, 2);
     lv_spinbox_set_value(ml_spn, s_settings.word_max_length);
     lv_obj_set_width(ml_spn, SPN_W);
-    lv_obj_set_pos(ml_spn, CTL_X, ctl_y(row));
+    lv_obj_set_pos(ml_spn, CTL_X, cur_y + 2);
     lv_group_add_obj(s_content_group, ml_spn);
     lv_obj_add_event_cb(ml_spn, [](lv_event_t* e) {
         s_settings.word_max_length = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    row++;
+    cur_y += CTL_ROW;
 
-    // Row 6: QSO Words
+    // QSO Words
     lv_obj_t* qw_lbl = lv_label_create(cont);
     lv_label_set_text(qw_lbl, "QSO Words");
-    lv_obj_set_pos(qw_lbl, LBL_X, lbl_y(row));
+    lv_obj_set_pos(qw_lbl, LBL_X, cur_y + 7);
 
     lv_obj_t* qw_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(qw_spn, 0, 9);
     lv_spinbox_set_digit_count(qw_spn, 1);
     lv_spinbox_set_value(qw_spn, s_settings.qso_max_words);
     lv_obj_set_width(qw_spn, SPN_W);
-    lv_obj_set_pos(qw_spn, CTL_X, ctl_y(row));
+    lv_obj_set_pos(qw_spn, CTL_X, cur_y + 2);
     lv_group_add_obj(s_content_group, qw_spn);
     lv_obj_add_event_cb(qw_spn, [](lv_event_t* e) {
         s_settings.qso_max_words = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    row++;
+    cur_y += CTL_ROW;
 
-    // Row 7: Session Size
+    // Session Size
     lv_obj_t* ss_lbl = lv_label_create(cont);
     lv_label_set_text(ss_lbl, "Session Size (0=off)");
-    lv_obj_set_pos(ss_lbl, LBL_X, lbl_y(row));
+    lv_obj_set_pos(ss_lbl, LBL_X, cur_y + 7);
 
     lv_obj_t* ss_spn = lv_spinbox_create(cont);
     lv_spinbox_set_range(ss_spn, 0, 99);
     lv_spinbox_set_digit_count(ss_spn, 2);
     lv_spinbox_set_value(ss_spn, s_settings.session_size);
     lv_obj_set_width(ss_spn, SPN_W);
-    lv_obj_set_pos(ss_spn, CTL_X, ctl_y(row));
+    lv_obj_set_pos(ss_spn, CTL_X, cur_y + 2);
     lv_group_add_obj(s_content_group, ss_spn);
     lv_obj_add_event_cb(ss_spn, [](lv_event_t* e) {
         s_settings.session_size = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    row++;
+    cur_y += CTL_ROW;
 
 #ifdef NATIVE_BUILD
     lv_obj_t* hint = lv_label_create(cont);
-    lv_obj_set_pos(hint, LBL_X, lbl_y(row));
+    lv_obj_set_pos(hint, LBL_X, cur_y);
     lv_label_set_text(hint, "\xe2\x86\x91/\xe2\x86\x93=navigate    e=toggle/edit    E=back");
 #endif
 
