@@ -291,7 +291,7 @@ static void update_status_bar_info()
 {
     if (s_active_sb) {
         switch (s_encoder_mode) {
-            case EncoderMode::WPM:    s_active_sb->set_wpm(s_settings.wpm); break;
+            case EncoderMode::WPM:    s_active_sb->set_wpm(s_settings.wpm, s_settings.farnsworth); break;
             case EncoderMode::VOLUME: s_active_sb->set_volume(s_settings.volume); break;
             case EncoderMode::SCROLL: s_active_sb->set_scroll(); break;
         }
@@ -548,6 +548,13 @@ static void on_letter_decoded(const std::string& letter)
             lv_obj_remove_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
         }
         (void)hit;
+    }
+
+    // Update effective WPM from straight keyer's adaptive timing
+    if (s_straight_keyer && !s_settings.ext_key_iambic && s_active_sb) {
+        unsigned long dit_avg = s_straight_keyer->get_dit_avg();
+        int eff_wpm = (dit_avg > 0) ? (int)(1200 / dit_avg) : 0;
+        s_active_sb->set_wpm(s_settings.wpm, s_settings.farnsworth, eff_wpm);
     }
 }
 
@@ -908,8 +915,8 @@ static lv_obj_t* build_keyer_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("CW Keyer");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_KEYBOARD);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
 #ifdef NATIVE_BUILD
@@ -937,8 +944,8 @@ static lv_obj_t* build_generator_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("CW Generator");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_PLAY);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
 #ifdef NATIVE_BUILD
@@ -964,8 +971,8 @@ static lv_obj_t* build_echo_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("Echo Trainer");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_LOOP);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
     const lv_coord_t ROW_H  = (SCREEN_H - content_y()) / 3;
@@ -1012,8 +1019,8 @@ static lv_obj_t* build_chatbot_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("QSO Chatbot");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_ENVELOPE);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
 #ifdef NATIVE_BUILD
@@ -1061,8 +1068,8 @@ static lv_obj_t* build_settings_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("Settings");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_SETTINGS);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
     if (s_settings_group) lv_group_del(s_settings_group);
@@ -1393,8 +1400,8 @@ static lv_obj_t* build_content_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("Content");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_LIST);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
     if (s_content_group) lv_group_del(s_content_group);
@@ -1593,7 +1600,7 @@ static lv_obj_t* build_wifi_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("WiFi Setup");
+    sb->set_mode(LV_SYMBOL_WIFI);
     s_active_sb = sb;
 
     if (s_wifi_group) lv_group_del(s_wifi_group);
@@ -1782,8 +1789,8 @@ static lv_obj_t* build_inet_cw_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode("Internet CW");
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_GPS);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
     if (s_inet_group) lv_group_del(s_inet_group);
@@ -1878,11 +1885,9 @@ static lv_obj_t* build_inet_cw_active_screen()
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     delete s_active_sb; s_active_sb = nullptr;  // free settings screen's bar
-    const char* mode_str = (s_settings.inet_proto == 0)
-        ? "CWCom" : "MOPP";
     StatusBar* sb = new StatusBar(scr, menu_font());
-    sb->set_mode(mode_str);
-    sb->set_wpm(s_settings.wpm);
+    sb->set_mode(LV_SYMBOL_GPS);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
     s_active_sb = sb;
 
     lv_coord_t y = content_y() + 2;

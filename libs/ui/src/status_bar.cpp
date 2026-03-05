@@ -27,35 +27,42 @@ StatusBar::StatusBar(lv_obj_t* parent, const lv_font_t* font)
     lv_label_set_text(wpm_label_, "");
     lv_obj_set_style_text_color(wpm_label_, lv_color_white(), 0);
     lv_obj_set_style_text_font(wpm_label_, f, 0);
-    // Reserve space for wifi icon + battery label.
-    lv_coord_t bat_reserve = lv_font_get_line_height(f) * 3 + 8;
-    lv_coord_t wifi_reserve = lv_font_get_line_height(f) + 4;
-    lv_obj_align(wpm_label_, LV_ALIGN_RIGHT_MID,
-                 -(bat_reserve + wifi_reserve), 0);
+    // Position after mode icon — will be placed dynamically
+    lv_obj_align_to(wpm_label_, mode_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
 
     wifi_label_ = lv_label_create(bar_);
     lv_label_set_text(wifi_label_, "");
     lv_obj_set_style_text_color(wifi_label_, lv_color_white(), 0);
     lv_obj_set_style_text_font(wifi_label_, f, 0);
-    lv_obj_align(wifi_label_, LV_ALIGN_RIGHT_MID, -(bat_reserve + 2), 0);
 
     bat_label_ = lv_label_create(bar_);
     lv_label_set_text(bat_label_, "");
     lv_obj_set_style_text_color(bat_label_, lv_color_white(), 0);
     lv_obj_set_style_text_font(bat_label_, f, 0);
     lv_obj_align(bat_label_, LV_ALIGN_RIGHT_MID, -4, 0);
+
+    // wifi goes left of battery
+    lv_obj_align_to(wifi_label_, bat_label_, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 }
 
-void StatusBar::set_mode(const char* name)
+void StatusBar::set_mode(const char* icon)
 {
-    lv_label_set_text(mode_label_, name);
+    lv_label_set_text(mode_label_, icon);
+    // Re-chain wpm label after mode icon
+    lv_obj_align_to(wpm_label_, mode_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
 }
 
-void StatusBar::set_wpm(int wpm)
+void StatusBar::set_wpm(int wpm, int farnsworth, int effective_wpm)
 {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d WPM", wpm);
+    char buf[32];
+    if (effective_wpm > 0 && effective_wpm != wpm)
+        snprintf(buf, sizeof(buf), "%d/%dW", effective_wpm, wpm);
+    else if (farnsworth > 0 && farnsworth < wpm)
+        snprintf(buf, sizeof(buf), "%d(%d)W", wpm, farnsworth);
+    else
+        snprintf(buf, sizeof(buf), "%d WPM", wpm);
     lv_label_set_text(wpm_label_, buf);
+    lv_obj_align_to(wpm_label_, mode_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
 }
 
 void StatusBar::set_volume(int vol)
@@ -63,11 +70,13 @@ void StatusBar::set_volume(int vol)
     char buf[16];
     snprintf(buf, sizeof(buf), "Vol %d", vol);
     lv_label_set_text(wpm_label_, buf);
+    lv_obj_align_to(wpm_label_, mode_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
 }
 
 void StatusBar::set_scroll()
 {
     lv_label_set_text(wpm_label_, LV_SYMBOL_UP LV_SYMBOL_DOWN " Scroll");
+    lv_obj_align_to(wpm_label_, mode_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
 }
 
 void StatusBar::set_wifi(bool connected, bool ap_mode)
@@ -75,9 +84,11 @@ void StatusBar::set_wifi(bool connected, bool ap_mode)
     if (connected)
         lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);
     else if (ap_mode)
-        lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);  // same icon, could differ
+        lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);
     else
         lv_label_set_text(wifi_label_, "");
+    // Re-align wifi left of battery
+    lv_obj_align_to(wifi_label_, bat_label_, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 }
 
 void StatusBar::set_battery(uint8_t percent, bool charging)
@@ -86,10 +97,32 @@ void StatusBar::set_battery(uint8_t percent, bool charging)
         lv_label_set_text(bat_label_, "");
         return;
     }
-    char buf[8];
-    if (charging)
-        snprintf(buf, sizeof(buf), "CHG");
-    else
-        snprintf(buf, sizeof(buf), "%d%%", percent);
-    lv_label_set_text(bat_label_, buf);
+    if (charging) {
+        lv_label_set_text(bat_label_, LV_SYMBOL_CHARGE);
+        lv_obj_set_style_text_color(bat_label_, lv_color_hex(0x00FF00), 0);
+    } else {
+        const char* sym;
+        lv_color_t col;
+        if (percent >= 80) {
+            sym = LV_SYMBOL_BATTERY_FULL;
+            col = lv_color_hex(0x00FF00);
+        } else if (percent >= 60) {
+            sym = LV_SYMBOL_BATTERY_3;
+            col = lv_color_hex(0xAAFF00);
+        } else if (percent >= 40) {
+            sym = LV_SYMBOL_BATTERY_2;
+            col = lv_color_hex(0xFFFF00);
+        } else if (percent >= 20) {
+            sym = LV_SYMBOL_BATTERY_1;
+            col = lv_color_hex(0xFF8800);
+        } else {
+            sym = LV_SYMBOL_BATTERY_EMPTY;
+            col = lv_color_hex(0xFF0000);
+        }
+        lv_label_set_text(bat_label_, sym);
+        lv_obj_set_style_text_color(bat_label_, col, 0);
+    }
+    lv_obj_align(bat_label_, LV_ALIGN_RIGHT_MID, -4, 0);
+    // Re-align wifi left of battery
+    lv_obj_align_to(wifi_label_, bat_label_, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 }

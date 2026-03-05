@@ -6,8 +6,6 @@
 // Thin bar pinned to the top of a screen.
 //
 // Height adapts to the supplied font (default: LVGL default font → 20 px).
-//
-// Shows:  <mode-name>          WPM: <nn>
 
 class StatusBar
 {
@@ -16,8 +14,8 @@ public:
     // font: if non-null, applied to all labels and used to compute bar height.
     explicit StatusBar(lv_obj_t* parent, const lv_font_t* font = nullptr);
 
-    void set_mode(const char* name);
-    void set_wpm(int wpm);
+    void set_mode(const char* icon);
+    void set_wpm(int wpm, int farnsworth = 0, int effective_wpm = 0);
     void set_volume(int vol);
     void set_scroll();
     void set_battery(uint8_t percent, bool charging);
