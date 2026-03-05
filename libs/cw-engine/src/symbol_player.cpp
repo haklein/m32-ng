@@ -33,7 +33,7 @@ unsigned long SymbolPlayer::getPlayStateDuration()
         return duration_unit;
     case PLAY_STATE_DOT_OFF:
     case PLAY_STATE_DASH_OFF:
-        return duration_unit + release_comp_ms;
+        return duration_unit;
     case PLAY_STATE_STOPPED:
     case PLAY_STATE_UNSET:
         return 0;

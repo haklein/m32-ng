@@ -56,4 +56,9 @@ private:
     bool mode_a = false;
     uint8_t curtisb_dit_pct_ = 0;  // 0 = original Curtis B
     uint8_t curtisb_dah_pct_ = 0;
+
+    // Paddle latches — capture presses that occur while a symbol is playing.
+    // Without these, a brief opposite-paddle tap during a playing element is lost.
+    bool dit_latch_ = false;
+    bool dah_latch_ = false;
 };

@@ -76,8 +76,8 @@ struct AppSettings {
     // VERSION 11
     uint8_t  adsr_ms = 7;         // ADSR attack+release (ms), range 1-15
     // VERSION 12
-    uint8_t  curtisb_dit_pct = 40; // Curtis B dit timing %, 0-100
-    uint8_t  curtisb_dah_pct = 40; // Curtis B dah timing %, 0-100
+    uint8_t  curtisb_dit_pct = 0;  // Curtis B dit timing %, 0=always accept
+    uint8_t  curtisb_dah_pct = 0;  // Curtis B dah timing %, 0=always accept
     // VERSION 13 — Internet CW
     uint8_t  inet_proto     = 0;    // 0=CWCom, 1=MOPP
     uint16_t cwcom_wire     = 111;  // CWCom wire/channel number
