@@ -38,6 +38,7 @@ unsigned long SymbolPlayer::getPlayStateDuration()
     case PLAY_STATE_UNSET:
         return 0;
     }
+    return 0; // unreachable — satisfies -Wreturn-type
 }
 
 PlayState SymbolPlayer::nextPlayState()
@@ -56,6 +57,7 @@ PlayState SymbolPlayer::nextPlayState()
     case PLAY_STATE_DASH_OFF:
         return playStateFinished() ? PLAY_STATE_STOPPED : PLAY_STATE_DASH_OFF;
     }
+    return PLAY_STATE_STOPPED; // unreachable — satisfies -Wreturn-type
 }
 
 void SymbolPlayer::tick()

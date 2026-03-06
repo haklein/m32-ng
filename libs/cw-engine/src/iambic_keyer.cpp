@@ -112,6 +112,7 @@ KeyerState IambicKeyer::nextKeyerState()
       return KEYER_STATE_ALTERNATING_DASH;
     }
   }
+  return KEYER_STATE_STOPPED; // unreachable — satisfies -Wreturn-type
 }
 
 void IambicKeyer::tick()
