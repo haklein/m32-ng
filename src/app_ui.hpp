@@ -804,9 +804,14 @@ static void push_mode_screen(int idx)
         ns = build_wifi_screen();
         enter_cb = []() {
             lv_indev_set_group(s_enc_indev, s_wifi_group);
-            if (s_wifi_status_lbl)
-                lv_label_set_text(s_wifi_status_lbl, "Starting...");
-            s_wifi_portal_pending = true;  // defer heavy work to app_ui_tick
+#ifdef BOARD_POCKETWROOM
+            // Only start captive portal if not already connected.
+            if (!s_network || !s_network->wifi_is_connected()) {
+                if (s_wifi_status_lbl)
+                    lv_label_set_text(s_wifi_status_lbl, "Starting...");
+                s_wifi_portal_pending = true;
+            }
+#endif
         };
         leave_cb = []() {
             s_wifi_portal_pending = false;
@@ -1640,6 +1645,10 @@ static lv_obj_t* build_content_screen()
 }
 
 // ── Screen: WiFi Setup ──────────────────────────────────────────────────────
+
+// Forward: rebuild the WiFi screen in portal mode after disconnecting.
+static void wifi_start_portal_mode();
+
 static lv_obj_t* build_wifi_screen()
 {
     lv_obj_t* scr = lv_obj_create(nullptr);
@@ -1655,31 +1664,71 @@ static lv_obj_t* build_wifi_screen()
     lv_coord_t y0 = content_y() + 4;
 
 #ifdef BOARD_POCKETWROOM
-    // QR code (left side, larger for easy scanning)
-    char qr_text[64];
-    snprintf(qr_text, sizeof(qr_text), "WIFI:S:%s;T:nopass;P:;;", s_ap_ssid);
-    static constexpr int32_t QR_MAX_PX = 130;
-    lv_obj_t* qr = qr_canvas_create(scr, qr_text, QR_MAX_PX);
-    // QR side = (max_px / 33) * 33  (version 4 = 33 modules)
-    lv_coord_t qr_side = qr ? ((QR_MAX_PX / 33) * 33) : 0;
-    if (qr) lv_obj_set_pos(qr, 4, y0);
+    bool connected = s_network && s_network->wifi_is_connected();
 
-    // Instructions (right of QR)
-    lv_coord_t tx = qr ? (4 + qr_side + 8) : 8;
-    lv_obj_t* info = lv_label_create(scr);
-    lv_label_set_text_fmt(info, "%s\n192.168.4.1", s_ap_ssid);
-    lv_obj_set_style_text_font(info, menu_font(), 0);
-    lv_obj_set_pos(info, tx, y0);
-    lv_obj_set_width(info, SCREEN_W - tx - 4);
+    if (connected) {
+        // ── Connected: show IP, QR to web page, disconnect button ────────
+        char ip[20] = {};
+        s_network->wifi_get_ip(ip, sizeof(ip));
 
-    // Status label (right column, below info)
-    s_wifi_status_lbl = lv_label_create(scr);
-    lv_label_set_text(s_wifi_status_lbl, "");
-    lv_obj_set_style_text_font(s_wifi_status_lbl, menu_font(), 0);
-    lv_obj_set_pos(s_wifi_status_lbl, tx, y0 + 40);
-    lv_obj_set_width(s_wifi_status_lbl, SCREEN_W - tx - 60);
+        char url[48];
+        snprintf(url, sizeof(url), "http://%s/", ip);
+
+        // Reserve space for disconnect button at bottom
+        lv_coord_t btn_h = lv_font_get_line_height(menu_font()) + 12; // padding
+        lv_coord_t qr_max = SCREEN_H - y0 - btn_h - 8; // 8px gap
+        lv_obj_t* qr = qr_canvas_create(scr, url, qr_max);
+        lv_coord_t qr_side = qr ? ((qr_max / 33) * 33) : 0;
+        if (qr) lv_obj_set_pos(qr, 4, y0);
+
+        lv_coord_t tx = qr ? (4 + qr_side + 8) : 8;
+        lv_obj_t* info = lv_label_create(scr);
+        lv_label_set_text_fmt(info, "Connected\n%s", ip);
+        lv_obj_set_style_text_font(info, menu_font(), 0);
+        lv_obj_set_pos(info, tx, y0);
+        lv_obj_set_width(info, SCREEN_W - tx - 4);
+
+        if (s_active_sb) s_active_sb->set_wifi(true);
+
+        s_wifi_status_lbl = nullptr;  // not needed in connected state
+
+        // Disconnect button (bottom-left)
+        lv_obj_t* disc_btn = lv_button_create(scr);
+        lv_obj_t* disc_lbl = lv_label_create(disc_btn);
+        lv_label_set_text(disc_lbl, "Disconnect");
+        lv_obj_set_style_text_font(disc_lbl, menu_font(), 0);
+        lv_obj_align(disc_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+        lv_group_add_obj(s_wifi_group, disc_btn);
+        lv_obj_add_event_cb(disc_btn, [](lv_event_t*) {
+            if (s_network) {
+                screenshot_server_stop();
+                s_network->wifi_disconnect();
+            }
+            wifi_start_portal_mode();
+        }, LV_EVENT_CLICKED, nullptr);
+    } else {
+        // ── Not connected: show AP QR for captive portal ─────────────────
+        char qr_text[64];
+        snprintf(qr_text, sizeof(qr_text), "WIFI:S:%s;T:nopass;P:;;", s_ap_ssid);
+        static constexpr int32_t QR_MAX_PX = 130;
+        lv_obj_t* qr = qr_canvas_create(scr, qr_text, QR_MAX_PX);
+        lv_coord_t qr_side = qr ? ((QR_MAX_PX / 33) * 33) : 0;
+        if (qr) lv_obj_set_pos(qr, 4, y0);
+
+        lv_coord_t tx = qr ? (4 + qr_side + 8) : 8;
+        lv_obj_t* info = lv_label_create(scr);
+        lv_label_set_text_fmt(info, "%s\n192.168.4.1", s_ap_ssid);
+        lv_obj_set_style_text_font(info, menu_font(), 0);
+        lv_obj_set_pos(info, tx, y0);
+        lv_obj_set_width(info, SCREEN_W - tx - 4);
+
+        s_wifi_status_lbl = lv_label_create(scr);
+        lv_label_set_text(s_wifi_status_lbl, "");
+        lv_obj_set_style_text_font(s_wifi_status_lbl, menu_font(), 0);
+        lv_obj_set_pos(s_wifi_status_lbl, tx, y0 + 40);
+        lv_obj_set_width(s_wifi_status_lbl, SCREEN_W - tx - 60);
+    }
 #else
-    // Simulator: WiFi not available
     lv_obj_t* info = lv_label_create(scr);
     lv_label_set_text(info, "WiFi not available\nin simulator");
     lv_obj_set_style_text_font(info, menu_font(), 0);
@@ -1705,6 +1754,34 @@ static lv_obj_t* build_wifi_screen()
     }, LV_EVENT_CLICKED, nullptr);
 
     return scr;
+}
+
+// Rebuild WiFi screen in portal (not-connected) mode.
+// Called from the Disconnect button handler.
+static void wifi_start_portal_mode()
+{
+#ifdef BOARD_POCKETWROOM
+    // Pop triggers leave_cb which cleans up portal/QR.
+    s_stack.pop();
+    // Re-select the WiFi menu item and "click" it to push a fresh WiFi screen.
+    // build_wifi_screen() will see wifi not connected → portal layout.
+    // We manually replicate the push+enter sequence from menu_select.
+    lv_obj_t* ns = build_wifi_screen();
+    s_stack.push(ns,
+        []() {
+            lv_indev_set_group(s_enc_indev, s_wifi_group);
+            if (s_wifi_status_lbl)
+                lv_label_set_text(s_wifi_status_lbl, "Starting...");
+            s_wifi_portal_pending = true;
+        },
+        []() {
+            s_wifi_portal_pending = false;
+            if (s_portal) { s_portal->end(); delete s_portal; s_portal = nullptr; }
+            qr_canvas_destroy();
+            s_wifi_status_lbl = nullptr;
+            delete s_active_sb; s_active_sb = nullptr;
+        });
+#endif
 }
 
 // ── Screen: Internet CW ──────────────────────────────────────────────────
