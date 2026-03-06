@@ -57,7 +57,7 @@ private:
     uint8_t treeptr = 0;
 
     // Word-gap detection: after decoding a character, if silence continues
-    // for another decode_threshold * 2 ms, emit a word space (" ").
+    // for another decode_threshold * 5 ms, emit a word space (" ").
     bool space_pending_ = false;
     unsigned long char_decode_time_ = 0;
 };
