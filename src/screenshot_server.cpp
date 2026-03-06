@@ -511,15 +511,15 @@ void screenshot_server_start()
     s_server->on("/api/meta", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_meta(r); });
 
-    // Slots API
-    s_server->on("/api/slots", HTTP_GET,
-                 [](AsyncWebServerRequest* r) { handle_api_slots_list(r); });
+    // Slots API (specific routes first)
     s_server->on("/api/slots/save", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_slot_save(r); });
     s_server->on("/api/slots/load", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_slot_load(r); });
     s_server->on("/api/slots/delete", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_slot_delete(r); });
+    s_server->on("/api/slots", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_slots_list(r); });
 
     // SPA index page
     s_server->on("/", HTTP_GET, [](AsyncWebServerRequest* r) {

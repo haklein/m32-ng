@@ -35,8 +35,10 @@
 #include "mopp_codec.h"
 #include "rx_cw_player.h"
 #include "cw_invaders.h"
+#ifdef BOARD_POCKETWROOM
 #include "config_api.h"
 #include <ArduinoJson.h>
+#endif
 
 // content_y() removed — use content_y() below (depends on font setting).
 
@@ -193,6 +195,7 @@ static void load_settings()
     }
 }
 
+#ifdef BOARD_POCKETWROOM
 // Forward declaration needed by config API (defined later in this file)
 static void apply_settings();
 
@@ -449,6 +452,7 @@ bool config_delete_slot(const char* name)
     s_storage->commit();
     return true;
 }
+#endif // BOARD_POCKETWROOM — config API
 
 // ── CW engine (keyer + echo modes) ────────────────────────────────────────
 static PaddleCtl*      s_paddle          = nullptr;
