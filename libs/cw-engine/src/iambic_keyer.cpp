@@ -8,16 +8,13 @@ IambicKeyer::IambicKeyer(unsigned long duration_unit, play_state_changed_fun_ptr
 
 void IambicKeyer::setLeverState(LeverState lever_state)
 {
-  //printf("**  Lever state: %s -> %s\n", lever_state_str[this->lever_state], lever_state_str[lever_state]);
+  // Capture any new squeeze during an element so brief opposite-paddle taps
+  // (e.g. the dah in F = di di da di) aren't lost if released before element ends.
   if (this->lever_state != lever_state && (lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT))
   {
-    // Enhanced Curtis B: only accept squeeze if past threshold % of element
-    if (symbol_player.isPastElementThreshold(curtisb_dit_pct_, curtisb_dah_pct_)) {
-      lever_upgrade = true;
-    }
+    lever_upgrade = true;
   }
   this->lever_state = lever_state;
-  // Latches are updated from live lever_state in tick() — not here.
 }
 
 KeyerState IambicKeyer::nextKeyerState()
@@ -56,17 +53,17 @@ KeyerState IambicKeyer::nextKeyerState()
     switch (lever_state)
     {
     case LEVER_UNSET:
+      // Curtis B: both paddles released during alternation → one more element.
       if (prev_lever_state == LEVER_DOT_DASH || prev_lever_state == LEVER_DASH_DOT)
       {
         prev_lever_state = LEVER_UNSET;
         return KEYER_STATE_ALTERNATING_DASH;
       }
-      else
-      {
-        return KEYER_STATE_STOPPED;
-      }
+      return KEYER_STATE_STOPPED;
     case LEVER_DOT:
-      return KEYER_STATE_DOT;
+      // Same paddle still held, opposite released → stop alternation.
+      // (Operator released dah during final dit — e.g. C = -.-.)
+      return KEYER_STATE_STOPPED;
     case LEVER_DASH:
       return KEYER_STATE_DASH;
     case LEVER_DOT_DASH:
@@ -84,14 +81,12 @@ KeyerState IambicKeyer::nextKeyerState()
         prev_lever_state = LEVER_UNSET;
         return KEYER_STATE_ALTERNATING_DOT;
       }
-      else
-      {
-        return KEYER_STATE_STOPPED;
-      }
+      return KEYER_STATE_STOPPED;
+    case LEVER_DASH:
+      // Same paddle still held, opposite released → stop alternation.
+      return KEYER_STATE_STOPPED;
     case LEVER_DOT:
       return KEYER_STATE_DOT;
-    case LEVER_DASH:
-      return KEYER_STATE_DASH;
     case LEVER_DOT_DASH:
     case LEVER_DASH_DOT:
       return KEYER_STATE_ALTERNATING_DOT;
@@ -105,71 +100,25 @@ void IambicKeyer::tick()
 {
   symbol_player.tick();
 
-  // Update latches from live paddle state every tick — like the original
-  // Morserino's checkPaddles().  Latches only accumulate (set, never cleared
-  // here); they are cleared at element start below.
-  if (lever_state == LEVER_DOT || lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT)
-    dit_latch_ = true;
-  if (lever_state == LEVER_DASH || lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT)
-    dah_latch_ = true;
-
   if (!symbol_player.ready())
-  {
     return;
-  }
 
-  // Element + inter-element gap finished.  Build effective lever state from
-  // the accumulated latches (which reflect every paddle press/hold since the
-  // last element started).
-  LeverState effective;
-  if (dit_latch_ && dah_latch_) {
-    // Both paddles active — alternate from current element.
-    if (keyer_state == KEYER_STATE_DOT || keyer_state == KEYER_STATE_ALTERNATING_DOT)
-      effective = LEVER_DOT_DASH;    // was dit → next is dah
-    else if (keyer_state == KEYER_STATE_DASH || keyer_state == KEYER_STATE_ALTERNATING_DASH)
-      effective = LEVER_DASH_DOT;    // was dah → next is dit
-    else
-      effective = LEVER_DOT_DASH;    // from idle, dit-first
-  } else if (dit_latch_) {
-    effective = LEVER_DOT;
-  } else if (dah_latch_) {
-    effective = LEVER_DASH;
-  } else {
-    effective = LEVER_UNSET;
-  }
-
-  // Feed effective into nextKeyerState, then restore real lever_state.
-  LeverState saved = lever_state;
-  lever_state = effective;
+  // Element + inter-element gap finished.  Decide next element from the
+  // current live lever_state (+ lever_upgrade for Curtis B mid-element squeeze).
   KeyerState next_keyer_state = nextKeyerState();
-  lever_state = saved;
 
   if (!mode_a)
-  {
-    prev_lever_state = effective;
-  }
+    prev_lever_state = lever_state;
 
   if (keyer_state == next_keyer_state && next_keyer_state == KEYER_STATE_STOPPED)
-  {
     return;
-  }
 
-  // printf("= Keyer state: %s -> %s\n", keyer_state_str[keyer_state], keyer_state_str[next_keyer_state]);
   this->keyer_state = next_keyer_state;
 
-  // Clear latches at element start (like original Morserino clearPaddleLatches).
-  // They will be re-set from live lever_state on subsequent ticks.
-  dit_latch_ = false;
-  dah_latch_ = false;
-
   if (keyer_state == KEYER_STATE_DOT || keyer_state == KEYER_STATE_ALTERNATING_DOT)
-  {
     symbol_player.playDot();
-  }
   else if (keyer_state == KEYER_STATE_DASH || keyer_state == KEYER_STATE_ALTERNATING_DASH)
-  {
     symbol_player.playDash();
-  }
 }
 
 void IambicKeyer::setDurationUnit(unsigned long duration_unit)

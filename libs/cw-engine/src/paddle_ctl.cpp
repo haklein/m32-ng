@@ -46,15 +46,25 @@ void PaddleCtl::tick()
     unsigned long now = millis_cb_();
     bool changed = false;
 
-    // Debounce dit independently.
-    if (dit_.raw != dit_.stable && (now - dit_.changed) > debounce_ms_) {
-        dit_.stable = dit_.raw;
-        changed = true;
+    // Debounce press; release is immediate.  Immediate release prevents
+    // false squeeze detection during fast paddle alternation (C → <KA>).
+    if (dit_.raw != dit_.stable) {
+        if (!dit_.raw) {
+            dit_.stable = false;     // release: immediate
+            changed = true;
+        } else if ((now - dit_.changed) > debounce_ms_) {
+            dit_.stable = true;      // press: debounced
+            changed = true;
+        }
     }
-    // Debounce dah independently.
-    if (dah_.raw != dah_.stable && (now - dah_.changed) > debounce_ms_) {
-        dah_.stable = dah_.raw;
-        changed = true;
+    if (dah_.raw != dah_.stable) {
+        if (!dah_.raw) {
+            dah_.stable = false;
+            changed = true;
+        } else if ((now - dah_.changed) > debounce_ms_) {
+            dah_.stable = true;
+            changed = true;
+        }
     }
 
     if (changed) {

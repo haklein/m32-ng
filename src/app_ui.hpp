@@ -76,8 +76,8 @@ struct AppSettings {
     // VERSION 11
     uint8_t  adsr_ms = 7;         // ADSR attack+release (ms), range 1-15
     // VERSION 12
-    uint8_t  curtisb_dit_pct = 0;  // Curtis B dit timing %, 0=always accept
-    uint8_t  curtisb_dah_pct = 0;  // Curtis B dah timing %, 0=always accept
+    uint8_t  curtisb_dit_pct = 75; // Curtis B dit timing % (original Morserino default)
+    uint8_t  curtisb_dah_pct = 45; // Curtis B dah timing % (original Morserino default)
     // VERSION 13 — Internet CW
     uint8_t  inet_proto     = 0;    // 0=CWCom, 1=MOPP
     uint16_t cwcom_wire     = 111;  // CWCom wire/channel number
@@ -243,6 +243,7 @@ static char          s_pending_pass[65]      = {};
 #ifdef BOARD_POCKETWROOM
 #include "wifi_portal.h"
 #include "qr_canvas.h"
+#include "screenshot_server.h"
 static WifiPortal*   s_portal               = nullptr;
 #endif
 
@@ -2826,6 +2827,7 @@ static void app_ui_tick()
             if (s_wifi_status_lbl)
                 lv_label_set_text_fmt(s_wifi_status_lbl, "Connected: %s", ip);
             if (s_active_sb) s_active_sb->set_wifi(true);
+            screenshot_server_start();
         } else {
             if (s_wifi_status_lbl)
                 lv_label_set_text(s_wifi_status_lbl, "Failed \xe2\x80\x94 press Back");
@@ -2955,4 +2957,8 @@ static void app_ui_tick()
     }
 
     lv_timer_handler();
+
+#ifdef BOARD_POCKETWROOM
+    screenshot_server_update();
+#endif
 }
