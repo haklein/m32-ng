@@ -298,13 +298,21 @@ In `nextKeyerState()`, when `keyer_state` is `DOT` or `DASH` and
 if ((keyer_state == DOT || keyer_state == DASH) && lever_upgrade)
 {
     lever_upgrade = false;
-    return (keyer_state == DOT) ? ALTERNATING_DASH : ALTERNATING_DOT;
+    return (keyer_state == DOT) ? KEYER_STATE_DASH : KEYER_STATE_DOT;
 }
 ```
 
 This takes priority over the live `lever_state` check below it.  So even if
 the operator has already released the opposite paddle (`lever_state == UNSET`),
 the latched upgrade ensures the alternate element plays.
+
+**Important:** the upgrade transitions to a plain `DOT`/`DASH` state, not
+`ALTERNATING_DOT`/`ALTERNATING_DASH`.  ALTERNATING states have special
+squeeze-exit logic ("same paddle held = stop alternation") which is wrong for
+lever_upgrade scenarios — the operator tapped the opposite paddle once and
+expects normal keying to resume after that element.  Using plain states means
+the *next* boundary decision simply reads the live `lever_state` with no
+squeeze assumptions.
 
 ### 4.3. nextKeyerState() — Full State Transition Table
 
@@ -314,7 +322,8 @@ This function is called once per element boundary.  It returns the next
 
 #### From UNSET / STOPPED / DOT / DASH
 
-First check: if `lever_upgrade` and we're in DOT or DASH, alternate (see 4.2).
+First check: if `lever_upgrade` and we're in DOT or DASH, switch to the
+opposite plain state (see 4.2).
 
 Otherwise, read live `lever_state`:
 
@@ -456,14 +465,11 @@ true and `nextKeyerState()` is called.
 3. Operator releases dit.  `lever_state = LEVER_UNSET`.
 
 4. Dah + gap finishes.  Decision: `keyer_state=DASH`, `lever_upgrade=true`.
-   - Consumes upgrade: `lever_upgrade=false`, returns `ALTERNATING_DOT`.
+   - Consumes upgrade: `lever_upgrade=false`, returns `KEYER_STATE_DOT` (plain).
    - Plays dit.
 
-5. Dit + gap finishes.  Decision: `ALTERNATING_DOT`, `lever_state=UNSET`.
-   - `lever_upgrade` cleared at top of ALTERNATING_DOT case.
-   - `prev_lever_state` — was it a squeeze?  No, prev_lever_state was set
-     to `LEVER_UNSET` at line 129 (tick's Curtis B snapshot).
-   - Returns `STOPPED`.
+5. Dit + gap finishes.  Decision: `KEYER_STATE_DOT`, `lever_state=UNSET`.
+   - Plain DOT + UNSET -> `STOPPED`.
 
 Result: dah dit = N.
 
@@ -472,9 +478,9 @@ Result: dah dit = N.
 1. Tap dit.  `LEVER_DOT` -> `KEYER_STATE_DOT`.  Plays dit.
 2. Release, tap dit again.  `DOT` -> `KEYER_STATE_DOT`.  Plays dit.
 3. During 2nd dit, squeeze dah.  `LEVER_DOT_DASH` -> `lever_upgrade = true`.
-4. 2nd dit ends.  `DOT` + `lever_upgrade` -> `ALTERNATING_DASH`.  Plays dah.
+4. 2nd dit ends.  `DOT` + `lever_upgrade` -> `KEYER_STATE_DASH` (plain).  Plays dah.
 5. During dah, operator releases dah.  `lever_state = LEVER_DOT`.
-6. Dah ends.  `ALTERNATING_DASH` + `LEVER_DOT` -> `KEYER_STATE_DOT`.  Plays dit.
+6. Dah ends.  `DASH` + `LEVER_DOT` -> `KEYER_STATE_DOT`.  Plays dit.
 7. Dit ends.  `DOT` + `LEVER_UNSET` (released) -> `STOPPED`.
 
 Result: dit dit dah dit = F.
@@ -486,14 +492,13 @@ Result: dit dit dah dit = F.
    Plays dah.
 3. During 2nd dah, squeeze dit.  `LEVER_DASH_DOT` -> `lever_upgrade = true`.
 4. Release dit, keep dah.  `lever_state = LEVER_DASH`.
-5. 2nd dah ends.  `DASH` + `lever_upgrade` -> `ALTERNATING_DOT`.  Plays dit.
+5. 2nd dah ends.  `DASH` + `lever_upgrade` -> `KEYER_STATE_DOT` (plain).  Plays dit.
    `lever_upgrade = false`.
-6. Release dah, press dah (for final element).  During dit:
-   - `lever_state` transitions through `LEVER_UNSET` -> `LEVER_DASH`.
-   - `isSounding()` may or may not be true.  But we're in `ALTERNATING_DOT`
-     so the `isSounding()` latch does NOT fire (only fires for plain DOT/DASH).
-7. Dit ends.  `ALTERNATING_DOT` + `LEVER_DASH` -> `KEYER_STATE_DASH`.
-   `lever_upgrade` already cleared at top of ALTERNATING_DOT.
+6. During dit, dah is still held.  `lever_state = LEVER_DASH`.
+   Since `keyer_state == KEYER_STATE_DOT` (plain), the `isSounding()` latch
+   CAN fire if dah is pressed during the dit tone — but dah was already held,
+   so `setLeverState` sees no change and doesn't set `lever_upgrade`.
+7. Dit ends.  `KEYER_STATE_DOT` + `LEVER_DASH` -> `KEYER_STATE_DASH`.
    Plays dah.
 8. Release dah.  Dah ends.  `DASH` + `LEVER_UNSET` -> `STOPPED`.
 
@@ -509,13 +514,20 @@ One might ask: why not just use DOT and DASH for everything, relying on
 `lever_upgrade` to drive alternation?
 
 The answer is the "stop on same paddle" rule.  When the operator is in the
-middle of an alternation and releases the opposite paddle (keeping the
+middle of a sustained squeeze and releases the opposite paddle (keeping the
 original), they want to STOP — not continue generating elements of the held
 paddle.
 
 For plain DOT/DASH, holding the paddle means "keep generating this element."
 For ALTERNATING, holding the *same* paddle means "I'm done alternating."
 These are opposite behaviors, so they need separate states.
+
+**Important:** `lever_upgrade` transitions to plain DOT/DASH, NOT to
+ALTERNATING states.  Only actual squeezes (LEVER_DOT_DASH / LEVER_DASH_DOT
+present at an element boundary) enter ALTERNATING.  This prevents the
+"same paddle = stop" logic from swallowing a held paddle after a brief
+opposite tap (e.g., holding dah, tapping dit for N — the dah must continue
+after the dit, not stop).
 
 ### 6.2. Why lever_upgrade is not set during ALTERNATING states
 

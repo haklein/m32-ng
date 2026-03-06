@@ -45,7 +45,15 @@ KeyerState IambicKeyer::nextKeyerState()
     if ((keyer_state == KEYER_STATE_DOT || keyer_state == KEYER_STATE_DASH) && lever_upgrade)
     {
       lever_upgrade = false;
-      return (keyer_state == KEYER_STATE_DOT) ? KEYER_STATE_ALTERNATING_DASH : KEYER_STATE_ALTERNATING_DOT;
+      // If the squeeze is still active at the boundary, let the squeeze
+      // path below handle it (enters ALTERNATING correctly for C, K, etc.).
+      // Only use lever_upgrade for the case where the opposite paddle was
+      // already released — play one opposite element as plain DOT/DASH so
+      // the keyer doesn't apply squeeze-exit logic afterward.
+      if (lever_state != LEVER_DOT_DASH && lever_state != LEVER_DASH_DOT) {
+        return (keyer_state == KEYER_STATE_DOT) ? KEYER_STATE_DASH : KEYER_STATE_DOT;
+      }
+      // Fall through to squeeze path below
     }
 
     switch (lever_state)
