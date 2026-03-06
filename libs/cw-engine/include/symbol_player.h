@@ -38,6 +38,9 @@ public:
     // threshold percentage, or if not currently in an ON state.
     bool isPastElementThreshold(uint8_t dit_pct, uint8_t dah_pct);
 
+    // True when an element is actively sounding (DOT_ON or DASH_ON).
+    bool isSounding() const;
+
 protected:
     PlayState getPlayState();
     unsigned long getPlayStateAge();

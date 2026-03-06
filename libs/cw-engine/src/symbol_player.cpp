@@ -101,6 +101,11 @@ void SymbolPlayer::setReleaseCompensation(unsigned long ms)
     this->release_comp_ms = ms;
 }
 
+bool SymbolPlayer::isSounding() const
+{
+    return play_state == PLAY_STATE_DOT_ON || play_state == PLAY_STATE_DASH_ON;
+}
+
 bool SymbolPlayer::isPastElementThreshold(uint8_t dit_pct, uint8_t dah_pct)
 {
     unsigned long dur;

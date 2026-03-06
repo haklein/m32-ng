@@ -8,11 +8,27 @@ IambicKeyer::IambicKeyer(unsigned long duration_unit, play_state_changed_fun_ptr
 
 void IambicKeyer::setLeverState(LeverState lever_state)
 {
-  // Capture any new squeeze during an element so brief opposite-paddle taps
-  // (e.g. the dah in F = di di da di) aren't lost if released before element ends.
-  if (this->lever_state != lever_state && (lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT))
-  {
-    lever_upgrade = true;
+  // Capture any opposite-paddle activity during an element so it isn't lost
+  // if released before the element ends.
+  //
+  // Squeeze (both paddles): always captured.
+  // Single opposite paddle: captured only while an element is sounding, so that
+  // pressing dit during a dah (N, G, Ö) or dah during a dit (F, P, Q) latches
+  // the alternate element even without a true squeeze.
+  if (this->lever_state != lever_state) {
+    if (lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT) {
+      lever_upgrade = true;
+    } else if (symbol_player.isSounding()) {
+      // Element tone is ON — latch opposite paddle press so brief taps
+      // aren't lost (N=dah dit, G=dah dah dit, etc.).
+      // Only for non-alternating states; ALTERNATING states already use
+      // live lever_state and don't need latching.
+      if (keyer_state == KEYER_STATE_DASH && lever_state == LEVER_DOT) {
+        lever_upgrade = true;
+      } else if (keyer_state == KEYER_STATE_DOT && lever_state == LEVER_DASH) {
+        lever_upgrade = true;
+      }
+    }
   }
   this->lever_state = lever_state;
 }
@@ -50,6 +66,7 @@ KeyerState IambicKeyer::nextKeyerState()
       return KEYER_STATE_DASH;
     }
   case KEYER_STATE_ALTERNATING_DOT:
+    lever_upgrade = false;  // ALTERNATING uses live lever_state, not latched upgrade
     switch (lever_state)
     {
     case LEVER_UNSET:
@@ -73,6 +90,7 @@ KeyerState IambicKeyer::nextKeyerState()
       return KEYER_STATE_ALTERNATING_DOT;
     }
   case KEYER_STATE_ALTERNATING_DASH:
+    lever_upgrade = false;  // ALTERNATING uses live lever_state, not latched upgrade
     switch (lever_state)
     {
     case LEVER_UNSET:
