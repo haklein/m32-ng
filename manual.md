@@ -383,7 +383,7 @@ straight key -- the tone sounds for exactly as long as the key is held down.
 The device enters deep sleep after the configured inactivity timeout (default 5
 minutes). Sleep can also be triggered by low battery.
 
-Wake the device by pressing the encoder button.
+Wake the device by pressing the aux button.
 
 On wake, the device performs a full reboot. If **Quick Start** is enabled, it
 automatically enters the last used mode. Otherwise, it shows the main menu.
