@@ -129,7 +129,7 @@ While keying your echo response:
 | Signal | Effect |
 |--------|--------|
 | 7+ dits (`<err>`) | Delete last word |
-| 4 consecutive E's | Delete last 3 characters |
+| 4 consecutive E's | Delete last word |
 
 ### QSO Chatbot
 
