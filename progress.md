@@ -8,6 +8,9 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] Morse decoder (character-by-character, word-space detection)
 - [x] Decoder word-gap detection (~8 dit-lengths silence → emits word space)
 - [x] Sidetone via I2S audio HAL
+- [x] No-debounce paddle controller (PaddleCtl — polled, no latency)
+- [x] lever_upgrade latch for mid-element opposite paddle detection
+- [x] ADSR envelope shaping (configurable 1–15 ms attack/release)
 
 ## Content Library
 - [x] Text generation from multiple content sources (words, abbreviations, callsigns, character groups)
@@ -36,8 +39,11 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] Multi-word phrase support (QSO phrases with spaces)
 - [x] Relaxed phrase comparison (case-insensitive, ignores extra/missing word spaces)
 - [x] `<HH>` error prosign removes last word only (not entire phrase)
+- [x] EEEE (4 consecutive E's) removes last word
 - [x] Sound effects on OK/ERR/MISS (SPIFFS MP3 with tone fallback)
 - [x] Pause/resume via encoder short press or aux button
+- [x] Adaptive WPM (auto ±1 WPM on success/failure, configurable on/off)
+- [x] Session limit (shared with Generator)
 
 ## QSO Chatbot
 - [x] Standalone CW chatbot library (`libs/cw-chatbot/`)
@@ -48,7 +54,7 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
   (USA, Canada, UK, Germany, France, Italy, Japan, Australia, Spain, Russia, Netherlands, Brazil)
 - [x] Callsign suffix bias toward 2–3 letters (realistic distribution)
 - [x] Pause/resume via encoder short press or aux button
-- [ ] Operator callsign configuration (currently hardcoded W1TEST)
+- [x] Operator callsign configuration (callsign setting in Network, used by chatbot)
 
 ## UI — Display & Typography
 - [x] Intel One Mono typeface for CW text areas (20 px Medium, 28 px Bold)
@@ -69,19 +75,19 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 
 ## Preferences
 - [x] Runtime settings struct (`AppSettings` VERSION 15) with defaults
-- [x] Settings screen (WPM, keyer mode, frequency, volume, text size, echo repeats, QSO depth, sleep timeout)
+- [x] Settings screen (WPM, Farnsworth, keyer mode, Curtis B dit/dah %, frequency, volume, ADSR, text size, brightness, sleep timeout, quick start, ext key mode, paddle swap, ext key swap, screen flip)
 - [x] Content screen (word/abbrev/call/char/QSO toggles, char group, Koch order, Koch lesson, max word length, session limit)
 - [x] Content screen reworked: one item per row, full labels, scrollable
 - [x] NVS persistence via `IStorage` + `PocketStorage` (blob save/load on every change)
 - [x] Quick Start (auto-enter last CW mode on boot)
 - [x] Default WPM: 20
-- [ ] Snapshots (save/recall preference sets from JSON files on LittleFS)
+- [x] Snapshots (up to 8 named slots, save/load/delete via web API and NVS)
 
 ## HAL
 - [x] `IKeyInput` interface with polling
 - [x] `IAudioOutput` interface (tone on/off, volume, poll)
 - [x] ESP32-S3 HAL (paddle, encoder, TLV320 codec, ST7789 display)
-- [x] Native HAL (SDL2 keyboard mapping, ALSA audio)
+- [x] Native HAL (SDL2 keyboard mapping, ALSA audio, MIDI input)
 - [x] Headphone detection via TLV320AIC3100 INT1 interrupt (auto speaker mute/unmute, timer clock fix)
 - [ ] `IDisplay` touch input
 - [x] `IStorage` NVS implementation (`PocketStorage` via ESP32 Preferences)
@@ -102,11 +108,42 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] ST7789 170×320 TFT with rotation
 - [x] Screen upside-down rotation (live flip via Screen Flip checkbox in Settings)
 - [x] Backlight brightness control (5 steps, persisted, long FN press to cycle)
-- [x] Status bar: mode icons, compact WPM format (Farnsworth, effective WPM), graphical battery
+- [x] Status bar: mode icons, compact WPM format (Farnsworth, effective WPM), graphical battery, WiFi indicator (green=connected, orange=AP)
 
 ## Power Management
-- [x] Deep sleep with configurable timeout (0=disabled, 1–30 min)
+- [x] Deep sleep with configurable timeout (0=disabled, 1–60 min)
 - [x] Battery voltage measurement via ADC
+- [x] Wake via aux button (GPIO0 deep sleep wakeup)
+
+## WiFi & Web Interface
+- [x] WiFi captive portal (AP mode, auto SSID "Morserino-XXYY")
+- [x] WiFi station mode (connect to existing network)
+- [x] WiFi setup screen with QR code (dynamic size based on screen)
+- [x] Web configuration SPA (embedded PROGMEM, dark theme, tabbed settings)
+- [x] REST API: GET/POST `/api/config`, GET `/api/meta`, GET `/api/screenshot`
+- [x] Settings slots via web API: `/api/slots`, `/api/slots/save`, `/api/slots/load`, `/api/slots/delete`
+- [x] JSON download/upload of all settings
+- [x] Field metadata table drives both JSON API and web UI dynamically
+
+## Internet CW
+- [x] CWCom (MorseKOB) protocol — UDP, duration-based timing
+- [x] MOPP (Morse over Packet Protocol) — compact binary dit/dah encoding
+- [x] Internet CW connect/disconnect screen with status display
+- [x] Split RX/TX text fields on active CW screen
+- [x] Configurable CWCom wire/channel (1–999)
+- [x] Keepalive packets
+
+## CW Invaders
+- [x] Space Invaders-style Morse training game
+- [x] Koch progression (start with 2 characters, unlock per level)
+- [x] 3 lives, score tracking, streak bonus
+- [x] Difficulty scaling (spawn interval, scroll speed)
+- [x] Pause/resume via encoder short press
+
+## Documentation
+- [x] Keyer architecture documentation (`keyer.md`)
+- [x] User manual (`manual.md`)
+- [x] Implementation progress tracker (`progress.md`)
 
 ## Build Targets
 - [x] `pocketwroom` — ESP32-S3 WROOM hardware target
