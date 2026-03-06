@@ -17,20 +17,7 @@ void IambicKeyer::setLeverState(LeverState lever_state)
     }
   }
   this->lever_state = lever_state;
-
-  // Latch only the OPPOSITE paddle so brief taps during a playing element
-  // aren't lost.  Same-paddle latching causes runaway repeats when the
-  // paddle is released before the element finishes.
-  bool is_dit_element = (keyer_state == KEYER_STATE_DOT || keyer_state == KEYER_STATE_ALTERNATING_DOT);
-  bool is_dah_element = (keyer_state == KEYER_STATE_DASH || keyer_state == KEYER_STATE_ALTERNATING_DASH);
-  if (!is_dit_element) {  // don't latch dit during a dit — only opposite
-    if (lever_state == LEVER_DOT || lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT)
-      dit_latch_ = true;
-  }
-  if (!is_dah_element) {  // don't latch dah during a dah — only opposite
-    if (lever_state == LEVER_DASH || lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT)
-      dah_latch_ = true;
-  }
+  // Latches are updated from live lever_state in tick() — not here.
 }
 
 KeyerState IambicKeyer::nextKeyerState()
@@ -118,45 +105,44 @@ void IambicKeyer::tick()
 {
   symbol_player.tick();
 
+  // Update latches from live paddle state every tick — like the original
+  // Morserino's checkPaddles().  Latches only accumulate (set, never cleared
+  // here); they are cleared at element start below.
+  if (lever_state == LEVER_DOT || lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT)
+    dit_latch_ = true;
+  if (lever_state == LEVER_DASH || lever_state == LEVER_DOT_DASH || lever_state == LEVER_DASH_DOT)
+    dah_latch_ = true;
+
   if (!symbol_player.ready())
   {
     return;
   }
 
-  // Merge paddle latches into lever_state so brief taps aren't lost.
-  // This matches the original Morserino's latch-based keyer behaviour.
-  LeverState effective = lever_state;
-  if (dit_latch_ || dah_latch_) {
-    bool dit_active = dit_latch_ || effective == LEVER_DOT
-                      || effective == LEVER_DOT_DASH || effective == LEVER_DASH_DOT;
-    bool dah_active = dah_latch_ || effective == LEVER_DASH
-                      || effective == LEVER_DOT_DASH || effective == LEVER_DASH_DOT;
-    if (dit_active && dah_active) {
-      // Preserve squeeze direction from the last known lever state
-      if (effective == LEVER_DOT || effective == LEVER_DOT_DASH)
-        effective = LEVER_DOT_DASH;
-      else if (effective == LEVER_DASH || effective == LEVER_DASH_DOT)
-        effective = LEVER_DASH_DOT;
-      else if (keyer_state == KEYER_STATE_DOT || keyer_state == KEYER_STATE_ALTERNATING_DOT)
-        effective = LEVER_DOT_DASH;   // last element was dit → squeeze = dot-dash
-      else
-        effective = LEVER_DASH_DOT;
-    } else if (dit_active) {
-      effective = LEVER_DOT;
-    } else {
-      effective = LEVER_DASH;
-    }
+  // Element + inter-element gap finished.  Build effective lever state from
+  // the accumulated latches (which reflect every paddle press/hold since the
+  // last element started).
+  LeverState effective;
+  if (dit_latch_ && dah_latch_) {
+    // Both paddles active — alternate from current element.
+    if (keyer_state == KEYER_STATE_DOT || keyer_state == KEYER_STATE_ALTERNATING_DOT)
+      effective = LEVER_DOT_DASH;    // was dit → next is dah
+    else if (keyer_state == KEYER_STATE_DASH || keyer_state == KEYER_STATE_ALTERNATING_DASH)
+      effective = LEVER_DASH_DOT;    // was dah → next is dit
+    else
+      effective = LEVER_DOT_DASH;    // from idle, dit-first
+  } else if (dit_latch_) {
+    effective = LEVER_DOT;
+  } else if (dah_latch_) {
+    effective = LEVER_DASH;
+  } else {
+    effective = LEVER_UNSET;
   }
 
-  // Save effective as lever_state for nextKeyerState(), then clear latches.
+  // Feed effective into nextKeyerState, then restore real lever_state.
   LeverState saved = lever_state;
   lever_state = effective;
-  dit_latch_ = false;
-  dah_latch_ = false;
-
   KeyerState next_keyer_state = nextKeyerState();
-
-  lever_state = saved;  // restore real lever state
+  lever_state = saved;
 
   if (!mode_a)
   {
@@ -171,7 +157,8 @@ void IambicKeyer::tick()
   // printf("= Keyer state: %s -> %s\n", keyer_state_str[keyer_state], keyer_state_str[next_keyer_state]);
   this->keyer_state = next_keyer_state;
 
-  // Clear latches at the start of each new element (matches original Morserino).
+  // Clear latches at element start (like original Morserino clearPaddleLatches).
+  // They will be re-set from live lever_state on subsequent ticks.
   dit_latch_ = false;
   dah_latch_ = false;
 

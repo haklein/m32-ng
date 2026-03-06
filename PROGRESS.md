@@ -241,9 +241,11 @@ Menu uses montserrat (not Intel) because it includes LVGL symbol glyphs for icon
 User-reported "extra dits" and "missed dits" vs original Morserino v7.03.
 Investigated original Morserino keyer state machine and identified three issues:
 
-- **Paddle latching**: Added opposite-paddle latching in `setLeverState()` — brief taps
-  during a playing element are captured and merged in `tick()`. Only opposite paddle is
-  latched (same-paddle latching caused runaway repeats).
+- **Paddle latching**: Rewrote to match original Morserino's `checkPaddles()` pattern.
+  Latches updated from live `lever_state` every `tick()` (accumulate, never cleared in
+  tick). Cleared only at element start (like original `clearPaddleLatches()`). Effective
+  lever state built from accumulated latches when element finishes. Fixes runaway dahs
+  after squeeze sequences and ignored held dit paddle.
 - **Inter-element gap**: Removed `release_comp_ms` from gap duration in `symbol_player.cpp`
   (was making total cycle `2*dit + release_comp` instead of `2*dit`).
 - **Curtis B threshold**: Changed default from 40% to 0% (always accept squeeze, matching
