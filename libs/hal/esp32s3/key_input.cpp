@@ -22,13 +22,6 @@ static void IRAM_ATTR isr_paddle_right()
     s_instance->push_from_isr(ev);
 }
 
-static void IRAM_ATTR isr_keyer()
-{
-    KeyEvent ev = (digitalRead(PIN_KEYER) == LOW)
-                  ? KeyEvent::STRAIGHT_DOWN : KeyEvent::STRAIGHT_UP;
-    s_instance->push_from_isr(ev);
-}
-
 // ── PocketKeyInput ─────────────────────────────────────────────────────────────
 
 PocketKeyInput::PocketKeyInput(uint32_t touch_l_idle, uint32_t touch_r_idle)
@@ -38,13 +31,15 @@ PocketKeyInput::PocketKeyInput(uint32_t touch_l_idle, uint32_t touch_r_idle)
     s_instance  = this;
     event_queue_ = xQueueCreate(QUEUE_DEPTH, sizeof(KeyEvent));
 
-    // Configure paddle and straight-key pins — active low, ISR on any edge.
+    // Configure paddle pins — active low, ISR on any edge.
     pinMode(PIN_PADDLE_LEFT,  INPUT_PULLUP);
     pinMode(PIN_PADDLE_RIGHT, INPUT_PULLUP);
-    pinMode(PIN_KEYER,        INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(PIN_PADDLE_LEFT),  isr_paddle_left,  CHANGE);
     attachInterrupt(digitalPinToInterrupt(PIN_PADDLE_RIGHT), isr_paddle_right, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(PIN_KEYER),        isr_keyer,        CHANGE);
+
+    // PIN_KEYER is the MOSFET output for keying an external transmitter.
+    pinMode(PIN_KEYER, OUTPUT);
+    digitalWrite(PIN_KEYER, LOW);
 
     // Encoder button and aux button are polled (short/long press detection).
     pinMode(PIN_ROT_BTN, INPUT_PULLUP);
@@ -67,7 +62,7 @@ PocketKeyInput::~PocketKeyInput()
     }
     detachInterrupt(digitalPinToInterrupt(PIN_PADDLE_LEFT));
     detachInterrupt(digitalPinToInterrupt(PIN_PADDLE_RIGHT));
-    detachInterrupt(digitalPinToInterrupt(PIN_KEYER));
+    digitalWrite(PIN_KEYER, LOW);
     if (event_queue_) vQueueDelete(event_queue_);
     s_instance = nullptr;
 }

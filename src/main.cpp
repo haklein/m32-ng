@@ -251,6 +251,7 @@ void setup()
                   s_settings.version, s_settings.wpm, s_settings.screen_flip);
 
     display_init(s_settings.screen_flip);
+    gfx.setBrightness(s_settings.brightness);
 
     s_on_screen_flip = [](bool flip) {
         gfx.setRotation(flip ? 1 : 3);
@@ -299,11 +300,10 @@ void setup()
     Log.verboseln("Key input init");
     s_keys = new PocketKeyInput(touch_l_idle, touch_r_idle);
 
-    // ── Straight key — uses ISR event bridge (s_straight_key_state) ────────
-    // PIN_KEYER may float LOW when no key is connected; polling GPIO directly
-    // would cause a phantom key-down.  ISR fires only on actual edges, and
-    // route() sets s_straight_key_state from STRAIGHT_DOWN/UP events.
-    // StraightKeyer's noise blanker debounces on top.
+    // ── Straight key — paddle jack in straight mode (ext_key_iambic=false) ─
+    // PADDLE_DIT_DOWN/UP events set s_straight_key_state when ext_key_iambic
+    // is false.  StraightKeyer's noise blanker debounces on top.
+    // PIN_KEYER (GPIO 41) is the MOSFET output — configured in PocketKeyInput.
     s_read_straight_key = []() -> bool { return s_straight_key_state; };
 
     // ── Battery ADC + charger status ─────────────────────────────────────
@@ -311,6 +311,7 @@ void setup()
     s_battery.begin();
     s_read_battery_percent = []() -> uint8_t { return s_battery.percent(); };
     s_is_charging          = []() -> bool    { return s_battery.charging(); };
+    s_set_brightness       = [](uint8_t level) { gfx.setBrightness(level); };
 
     // ── WiFi HAL + AP SSID ────────────────────────────────────────────────
     s_network = new Esp32Network();

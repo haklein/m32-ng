@@ -234,6 +234,62 @@ Menu uses montserrat (not Intel) because it includes LVGL symbol glyphs for icon
 
 ---
 
+## Session — Keyer fixes, FET output, brightness, content screen, status bar
+
+### Iambic keyer timing fixes (`libs/cw-engine/`)
+
+User-reported "extra dits" and "missed dits" vs original Morserino v7.03.
+Investigated original Morserino keyer state machine and identified three issues:
+
+- **Paddle latching**: Added opposite-paddle latching in `setLeverState()` — brief taps
+  during a playing element are captured and merged in `tick()`. Only opposite paddle is
+  latched (same-paddle latching caused runaway repeats).
+- **Inter-element gap**: Removed `release_comp_ms` from gap duration in `symbol_player.cpp`
+  (was making total cycle `2*dit + release_comp` instead of `2*dit`).
+- **Curtis B threshold**: Changed default from 40% to 0% (always accept squeeze, matching
+  original Morserino behavior).
+
+### MOSFET keyer output (`src/app_ui.hpp`, `libs/hal/esp32s3/key_input.cpp`)
+
+PIN_KEYER (GPIO 41) was incorrectly configured as INPUT for straight key. Fixed:
+- Removed ISR and INPUT_PULLUP on PIN_KEYER from `key_input.cpp`
+- Configured as OUTPUT, driven LOW by default
+- `digitalWrite(PIN_KEYER, HIGH/LOW)` added alongside `tone_on/tone_off` in:
+  - `on_play_state()` (iambic keyer)
+  - `on_straight_state()` (straight key via paddle jack)
+  - MorseTrainer sidetone lambda (generator/echo/chatbot)
+- Safety LOW in all mode leave callbacks
+- Straight key input comes from paddle jack (PADDLE_DIT/DAH events when ext_key_iambic=false)
+
+### Display brightness (`src/app_ui.hpp`, `src/main.cpp`)
+
+- 5 brightness steps matching original Morserino: 255 → 127 → 63 → 28 → 9
+- Cycled on long FN (aux) press (previously was pop-all, now encoder long press does that)
+- Persisted in `AppSettings.brightness` (VERSION bumped to 15)
+- Applied at boot via `gfx.setBrightness()` right after `display_init()`
+- Safety: `brightness=0` treated as 255 (prevents black screen on migration)
+
+### Status bar improvements (`libs/ui/`)
+
+- Mode text replaced with LVGL symbol icons
+- WPM format: `22 WPM` normal, `22(18)W` with Farnsworth, `eff/setW` with effective WPM
+- Graphical battery icons with color coding (green→yellow→red), charge indicator
+- Dynamic label positioning via `lv_obj_align_to` chaining
+
+### Content screen rework (`src/app_ui.hpp`)
+
+- Reworked from 2-per-row abbreviated labels to one item per row with full labels
+- Scrollable container for all content settings
+- Added Session limit spinbox (0=unlimited, 1–99 phrases per session)
+
+### Session limit (`src/app_ui.hpp`)
+
+- Phrase counter incremented in content phrase callback
+- Auto-pause when `session_size` reached; encoder short press resumes for another session
+- Counter reset on mode entry and unpause
+
+---
+
 ## Still to do
 
 ### HAL implementations

@@ -40,7 +40,7 @@
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 14;
+    static constexpr uint8_t VERSION = 15;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -84,6 +84,8 @@ struct AppSettings {
     char     callsign[16]   = {};   // station callsign (empty = anonymous)
     // VERSION 14 — session limit
     uint8_t  session_size   = 0;    // 0=unlimited, 1-99 phrases per session
+    // VERSION 15 — display brightness
+    uint8_t  brightness     = 255;  // backlight 0–255 (persisted)
 };
 static AppSettings s_settings;
 
@@ -122,6 +124,7 @@ static INetwork*     s_network = nullptr;  // nullptr on simulator
 // ── Battery HAL callbacks (set by platform main.cpp) ─────────────────────
 static uint8_t (*s_read_battery_percent)() = nullptr;  // 0–100, or 255 if n/a
 static bool    (*s_is_charging)()          = nullptr;
+static void    (*s_set_brightness)(uint8_t) = nullptr; // backlight 0–255
 
 // ── Dedicated CW task (pocketwroom only) ─────────────────────────────────
 // Moves PaddleCtl/IambicKeyer/StraightKeyer/MorseDecoder to a high-priority
@@ -180,6 +183,7 @@ static void load_settings()
     size_t n = s_storage->get_blob("m32", "settings", &tmp, sizeof(tmp));
     if (n >= sizeof(tmp.version) && tmp.version <= AppSettings::VERSION) {
         s_settings = tmp;  // old fields copied; new fields keep defaults
+        if (s_settings.brightness == 0) s_settings.brightness = 255;  // never fully black
         if (s_settings.version < AppSettings::VERSION) {
             s_settings.version = AppSettings::VERSION;
             save_settings();   // persist migrated settings
@@ -285,6 +289,23 @@ static unsigned long s_fn_last_press_t       = 0;
 static bool          s_fn_pending            = false;
 static constexpr unsigned long FN_DOUBLE_MS  = 400;
 
+// ── Brightness steps (matching original Morserino) ───────────────────────
+static constexpr uint8_t BRIGHTNESS_STEPS[] = { 255, 127, 63, 28, 9 };
+static constexpr int     BRIGHTNESS_N = sizeof(BRIGHTNESS_STEPS) / sizeof(BRIGHTNESS_STEPS[0]);
+
+static void cycle_brightness()
+{
+    if (!s_set_brightness) return;
+    int cur = 0;
+    for (int i = 0; i < BRIGHTNESS_N; ++i) {
+        if (s_settings.brightness == BRIGHTNESS_STEPS[i]) { cur = i; break; }
+    }
+    cur = (cur + 1) % BRIGHTNESS_N;
+    s_settings.brightness = BRIGHTNESS_STEPS[cur];
+    s_set_brightness(s_settings.brightness);
+    save_settings();
+}
+
 static void update_invaders_hud();  // forward decl
 
 static void update_status_bar_info()
@@ -356,6 +377,9 @@ static void on_straight_state(PlayState ps)
     switch (ps) {
     case PLAY_STATE_STRAIGHT_ON:
         s_audio->tone_on(s_settings.freq_hz);
+#ifdef BOARD_POCKETWROOM
+        digitalWrite(PIN_KEYER, HIGH);
+#endif
         s_decoder->set_transmitting(true);
 #ifdef BOARD_POCKETWROOM
         s_cw_last_element_end_t = (unsigned long)app_millis();
@@ -375,6 +399,9 @@ static void on_straight_state(PlayState ps)
         break;
     case PLAY_STATE_STRAIGHT_OFF:
         s_audio->tone_off();
+#ifdef BOARD_POCKETWROOM
+        digitalWrite(PIN_KEYER, LOW);
+#endif
         s_decoder->set_transmitting(false);
 #ifdef BOARD_POCKETWROOM
         s_cw_last_element_end_t = (unsigned long)app_millis();
@@ -441,6 +468,9 @@ static void on_play_state(PlayState state)
         case PLAY_STATE_DOT_ON:
         case PLAY_STATE_DASH_ON:
             s_audio->tone_on(s_settings.freq_hz);
+#ifdef BOARD_POCKETWROOM
+            digitalWrite(PIN_KEYER, HIGH);
+#endif
             s_decoder->set_transmitting(true);
             if (s_inet_cw_active)
                 s_timing_ringbuf.push(true, (uint32_t)now);
@@ -452,6 +482,9 @@ static void on_play_state(PlayState state)
             break;
         case PLAY_STATE_DOT_OFF:
             s_audio->tone_off();
+#ifdef BOARD_POCKETWROOM
+            digitalWrite(PIN_KEYER, LOW);
+#endif
             s_decoder->append_dot();
             s_decoder->set_transmitting(false);
             if (s_inet_cw_active)
@@ -464,6 +497,9 @@ static void on_play_state(PlayState state)
             break;
         case PLAY_STATE_DASH_OFF:
             s_audio->tone_off();
+#ifdef BOARD_POCKETWROOM
+            digitalWrite(PIN_KEYER, LOW);
+#endif
             s_decoder->append_dash();
             s_decoder->set_transmitting(false);
             if (s_inet_cw_active)
@@ -582,6 +618,8 @@ static void apply_settings()
     s_keyer->setCurtisBThreshold(s_settings.curtisb_dit_pct,
                                   s_settings.curtisb_dah_pct);
     s_trainer->set_release_compensation(s_settings.adsr_ms);
+    if (s_set_brightness)
+        s_set_brightness(s_settings.brightness);
     update_status_bar_info();
 }
 
@@ -641,6 +679,7 @@ static void push_mode_screen(int idx)
         leave_cb = []() {
 #ifdef BOARD_POCKETWROOM
             s_cw_engine_active = false;
+            digitalWrite(PIN_KEYER, LOW);
 #endif
             s_active_mode              = ActiveMode::NONE;
             s_encoder_mode             = EncoderMode::WPM;
@@ -664,6 +703,9 @@ static void push_mode_screen(int idx)
             s_encoder_mode     = EncoderMode::WPM;
             s_trainer->set_idle();
             s_audio->tone_off();
+#ifdef BOARD_POCKETWROOM
+            digitalWrite(PIN_KEYER, LOW);
+#endif
             s_pending_gen_phrase.clear();
             delete s_gen_tf; s_gen_tf = nullptr;
             delete s_active_sb; s_active_sb = nullptr;
@@ -683,6 +725,7 @@ static void push_mode_screen(int idx)
         leave_cb = []() {
 #ifdef BOARD_POCKETWROOM
             s_cw_engine_active = false;
+            digitalWrite(PIN_KEYER, LOW);
 #endif
             s_active_mode      = ActiveMode::NONE;
             s_encoder_mode     = EncoderMode::WPM;
@@ -734,6 +777,7 @@ static void push_mode_screen(int idx)
         leave_cb = []() {
 #ifdef BOARD_POCKETWROOM
             s_cw_engine_active = false;
+            digitalWrite(PIN_KEYER, LOW);
 #endif
             s_active_mode      = ActiveMode::NONE;
             s_encoder_mode     = EncoderMode::WPM;
@@ -793,6 +837,7 @@ static void push_mode_screen(int idx)
                 inet_cw_disconnect();  // no-op if not connected
 #ifdef BOARD_POCKETWROOM
                 s_cw_engine_active = false;
+                digitalWrite(PIN_KEYER, LOW);
 #endif
                 s_active_mode              = ActiveMode::NONE;
                 s_encoder_mode             = EncoderMode::WPM;
@@ -1986,14 +2031,6 @@ static void route_cw(KeyEvent ev)
             break;
         }
 
-        // ── Straight key ────────────────────────────────────────────────
-        case KeyEvent::STRAIGHT_DOWN:
-            s_straight_key_state = true;
-            break;
-        case KeyEvent::STRAIGHT_UP:
-            s_straight_key_state = false;
-            break;
-
         default:
             break;
     }
@@ -2095,8 +2132,7 @@ static void route_ui(KeyEvent ev)
             }
             break;
         case KeyEvent::BUTTON_AUX_LONG:
-            s_stack.pop_all();
-            lv_indev_set_group(s_enc_indev, s_menu_group);
+            cycle_brightness();
             break;
 
         default:
@@ -2201,8 +2237,7 @@ static void route(KeyEvent ev)
             }
             break;
         case KeyEvent::BUTTON_AUX_LONG:
-            s_stack.pop_all();
-            lv_indev_set_group(s_enc_indev, s_menu_group);
+            cycle_brightness();
             break;
 
         // ── Touch paddles (always iambic, obey paddle_swap) ─────────────
@@ -2350,8 +2385,17 @@ static void app_ui_init(uint32_t rng_seed)
 
     s_trainer = new MorseTrainer(
         [](bool on) {
-            if (on) s_audio->tone_on(s_settings.freq_hz);
-            else    s_audio->tone_off();
+            if (on) {
+                s_audio->tone_on(s_settings.freq_hz);
+#ifdef BOARD_POCKETWROOM
+                digitalWrite(PIN_KEYER, HIGH);
+#endif
+            } else {
+                s_audio->tone_off();
+#ifdef BOARD_POCKETWROOM
+                digitalWrite(PIN_KEYER, LOW);
+#endif
+            }
         },
         []() -> std::string {
             // Chatbot: return pending phrase, or empty to go Idle.
