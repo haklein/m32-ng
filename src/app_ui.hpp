@@ -580,6 +580,12 @@ static void update_status_bar_info()
             case EncoderMode::VOLUME: s_active_sb->set_volume(s_settings.volume); break;
             case EncoderMode::SCROLL: s_active_sb->set_scroll(); break;
         }
+#ifdef BOARD_POCKETWROOM
+        if (s_network) {
+            bool conn = s_network->wifi_is_connected();
+            s_active_sb->set_wifi(conn, !conn && s_wifi_portal_pending);
+        }
+#endif
     }
     // Invaders mode: WPM is part of the combined HUD label
     if (s_inv_score_lbl && s_encoder_mode == EncoderMode::WPM)

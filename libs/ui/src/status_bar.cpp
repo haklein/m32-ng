@@ -81,12 +81,15 @@ void StatusBar::set_scroll()
 
 void StatusBar::set_wifi(bool connected, bool ap_mode)
 {
-    if (connected)
+    if (connected) {
         lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);
-    else if (ap_mode)
+        lv_obj_set_style_text_color(wifi_label_, lv_color_hex(0x00FF00), 0); // green
+    } else if (ap_mode) {
         lv_label_set_text(wifi_label_, LV_SYMBOL_WIFI);
-    else
+        lv_obj_set_style_text_color(wifi_label_, lv_color_hex(0xFFAA00), 0); // orange
+    } else {
         lv_label_set_text(wifi_label_, "");
+    }
     // Re-align wifi left of battery
     lv_obj_align_to(wifi_label_, bat_label_, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 }
