@@ -35,6 +35,8 @@
 #include "mopp_codec.h"
 #include "rx_cw_player.h"
 #include "cw_invaders.h"
+#include "config_api.h"
+#include <ArduinoJson.h>
 
 // content_y() removed — use content_y() below (depends on font setting).
 
@@ -189,6 +191,263 @@ static void load_settings()
             save_settings();   // persist migrated settings
         }
     }
+}
+
+// Forward declaration needed by config API (defined later in this file)
+static void apply_settings();
+
+// ── Config API implementation ────────────────────────────────────────────
+// Field metadata table — drives JSON serialization and web UI.
+// To add a new setting: add it to AppSettings, then add one entry here.
+
+static const FieldMeta s_field_meta[] = {
+    // key                label               type            min  max step options                                group
+    {"wpm",              "Speed (WPM)",       FieldType::INT,   5,  40, 1, nullptr,                               "General"},
+    {"farnsworth",       "Farnsworth (0=off)", FieldType::INT,  0,  40, 1, nullptr,                               "General"},
+    {"freq_hz",          "Frequency (Hz)",    FieldType::INT, 400, 900,10, nullptr,                               "General"},
+    {"volume",           "Volume",            FieldType::INT,   0,  20, 1, nullptr,                               "General"},
+    {"adsr_ms",          "ADSR (ms)",         FieldType::INT,   1,  15, 1, nullptr,                               "General"},
+    {"brightness",       "Brightness",        FieldType::INT,   1, 255, 5, nullptr,                               "General"},
+    {"text_font_size",   "Text Size",         FieldType::ENUM,  0,   1, 0, "Normal|Large",                        "General"},
+    {"sleep_timeout_min","Sleep (min, 0=off)",FieldType::INT,   0,  60, 1, nullptr,                               "General"},
+    {"quick_start",      "Quick Start",       FieldType::BOOL,  0,   1, 0, nullptr,                               "General"},
+
+    {"mode_a",           "Keyer Mode",        FieldType::ENUM,  0,   1, 0, "Iambic B|Iambic A",                   "Keyer"},
+    {"curtisb_dit_pct",  "CurtisB DitT%",    FieldType::INT,   0, 100, 5, nullptr,                               "Keyer"},
+    {"curtisb_dah_pct",  "CurtisB DahT%",    FieldType::INT,   0, 100, 5, nullptr,                               "Keyer"},
+    {"ext_key_iambic",   "Ext Key Mode",      FieldType::ENUM,  0,   1, 0, "Straight|Iambic",                     "Keyer"},
+    {"paddle_swap",      "Paddle Swap",       FieldType::BOOL,  0,   1, 0, nullptr,                               "Keyer"},
+    {"ext_key_swap",     "Ext Key Swap",      FieldType::BOOL,  0,   1, 0, nullptr,                               "Keyer"},
+    {"screen_flip",      "Screen Flip",       FieldType::BOOL,  0,   1, 0, nullptr,                               "Keyer"},
+
+    {"cont_words",       "Words",             FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
+    {"cont_abbrevs",     "Abbreviations",     FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
+    {"cont_calls",       "Callsigns",         FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
+    {"cont_chars",       "Characters",        FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
+    {"cont_qso",         "QSO",               FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
+    {"chars_group",      "Character Set",     FieldType::ENUM,  0,   2, 0, "Alpha|Alpha+Num|All CW",              "Content"},
+    {"koch_lesson",      "Koch Lesson (0=off)",FieldType::INT,  0,  50, 1, nullptr,                               "Content"},
+    {"koch_order",       "Koch Order",        FieldType::ENUM,  0,   3, 0, "LCWO|Morserino|CW Academy|LICW",      "Content"},
+    {"word_max_length",  "Max Length (0=any)",FieldType::INT,   0,  15, 1, nullptr,                               "Content"},
+    {"qso_max_words",    "QSO Words (0=all)", FieldType::INT,   0,   9, 1, nullptr,                               "Content"},
+    {"session_size",     "Session Size (0=off)",FieldType::INT, 0,  99, 1, nullptr,                               "Content"},
+
+    {"echo_max_repeats", "Echo Repeats (0=inf)",FieldType::INT, 0,   9, 1, nullptr,                               "Training"},
+    {"adaptive_speed",   "Adaptive WPM",     FieldType::BOOL,  0,   1, 0, nullptr,                               "Training"},
+    {"chatbot_qso_depth","QSO Depth",        FieldType::ENUM,  0,   2, 0, "Minimal|Standard|Ragchew",            "Training"},
+
+    {"inet_proto",       "Internet CW",      FieldType::ENUM,  0,   1, 0, "CWCom|MOPP",                          "Network"},
+    {"cwcom_wire",       "CWCom Wire",       FieldType::INT,   1, 999, 1, nullptr,                               "Network"},
+    {"callsign",         "Callsign",         FieldType::STRING, 0,  15, 0, nullptr,                               "Network"},
+};
+static constexpr int s_field_meta_count = sizeof(s_field_meta) / sizeof(s_field_meta[0]);
+
+int config_get_field_meta(const FieldMeta** out)
+{
+    *out = s_field_meta;
+    return s_field_meta_count;
+}
+
+// Helper: get a setting value by key into a JsonDocument
+static void settings_field_to_json(JsonObject obj, const char* key)
+{
+    auto& s = s_settings;
+    // Each key maps directly to a struct field.  Bool fields stored as 0/1 in JSON.
+    if      (!strcmp(key, "wpm"))              obj[key] = s.wpm;
+    else if (!strcmp(key, "farnsworth"))        obj[key] = s.farnsworth;
+    else if (!strcmp(key, "mode_a"))            obj[key] = s.mode_a ? 1 : 0;
+    else if (!strcmp(key, "freq_hz"))           obj[key] = s.freq_hz;
+    else if (!strcmp(key, "volume"))            obj[key] = s.volume;
+    else if (!strcmp(key, "cont_words"))        obj[key] = s.cont_words ? 1 : 0;
+    else if (!strcmp(key, "cont_abbrevs"))      obj[key] = s.cont_abbrevs ? 1 : 0;
+    else if (!strcmp(key, "cont_calls"))        obj[key] = s.cont_calls ? 1 : 0;
+    else if (!strcmp(key, "cont_chars"))        obj[key] = s.cont_chars ? 1 : 0;
+    else if (!strcmp(key, "cont_qso"))          obj[key] = s.cont_qso ? 1 : 0;
+    else if (!strcmp(key, "chars_group"))       obj[key] = s.chars_group;
+    else if (!strcmp(key, "koch_lesson"))       obj[key] = s.koch_lesson;
+    else if (!strcmp(key, "koch_order"))        obj[key] = s.koch_order;
+    else if (!strcmp(key, "echo_max_repeats"))  obj[key] = s.echo_max_repeats;
+    else if (!strcmp(key, "chatbot_qso_depth")) obj[key] = s.chatbot_qso_depth;
+    else if (!strcmp(key, "text_font_size"))    obj[key] = s.text_font_size;
+    else if (!strcmp(key, "ext_key_iambic"))    obj[key] = s.ext_key_iambic ? 1 : 0;
+    else if (!strcmp(key, "paddle_swap"))       obj[key] = s.paddle_swap ? 1 : 0;
+    else if (!strcmp(key, "ext_key_swap"))      obj[key] = s.ext_key_swap ? 1 : 0;
+    else if (!strcmp(key, "screen_flip"))       obj[key] = s.screen_flip ? 1 : 0;
+    else if (!strcmp(key, "word_max_length"))   obj[key] = s.word_max_length;
+    else if (!strcmp(key, "sleep_timeout_min")) obj[key] = s.sleep_timeout_min;
+    else if (!strcmp(key, "quick_start"))       obj[key] = s.quick_start ? 1 : 0;
+    else if (!strcmp(key, "adaptive_speed"))    obj[key] = s.adaptive_speed ? 1 : 0;
+    else if (!strcmp(key, "qso_max_words"))     obj[key] = s.qso_max_words;
+    else if (!strcmp(key, "adsr_ms"))           obj[key] = s.adsr_ms;
+    else if (!strcmp(key, "curtisb_dit_pct"))   obj[key] = s.curtisb_dit_pct;
+    else if (!strcmp(key, "curtisb_dah_pct"))   obj[key] = s.curtisb_dah_pct;
+    else if (!strcmp(key, "inet_proto"))        obj[key] = s.inet_proto;
+    else if (!strcmp(key, "cwcom_wire"))        obj[key] = s.cwcom_wire;
+    else if (!strcmp(key, "callsign"))          obj[key] = (const char*)s.callsign;
+    else if (!strcmp(key, "session_size"))      obj[key] = s.session_size;
+    else if (!strcmp(key, "brightness"))        obj[key] = s.brightness;
+    else if (!strcmp(key, "last_mode"))         obj[key] = s.last_mode;
+}
+
+char* config_settings_to_json()
+{
+    JsonDocument doc;
+    JsonObject obj = doc.to<JsonObject>();
+    for (int i = 0; i < s_field_meta_count; i++)
+        settings_field_to_json(obj, s_field_meta[i].key);
+    size_t len = measureJson(doc) + 1;
+    char* buf = (char*)malloc(len);
+    if (buf) serializeJson(doc, buf, len);
+    return buf;
+}
+
+// Helper: set a single field from a JSON value
+static bool settings_field_from_json(const char* key, JsonVariant val)
+{
+    auto& s = s_settings;
+    if      (!strcmp(key, "wpm"))              { s.wpm = val.as<int>(); return true; }
+    else if (!strcmp(key, "farnsworth"))        { s.farnsworth = val.as<int>(); return true; }
+    else if (!strcmp(key, "mode_a"))            { s.mode_a = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "freq_hz"))           { s.freq_hz = val.as<int>(); return true; }
+    else if (!strcmp(key, "volume"))            { s.volume = val.as<int>(); return true; }
+    else if (!strcmp(key, "cont_words"))        { s.cont_words = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "cont_abbrevs"))      { s.cont_abbrevs = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "cont_calls"))        { s.cont_calls = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "cont_chars"))        { s.cont_chars = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "cont_qso"))          { s.cont_qso = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "chars_group"))       { s.chars_group = val.as<int>(); return true; }
+    else if (!strcmp(key, "koch_lesson"))       { s.koch_lesson = val.as<int>(); return true; }
+    else if (!strcmp(key, "koch_order"))        { s.koch_order = val.as<int>(); return true; }
+    else if (!strcmp(key, "echo_max_repeats"))  { s.echo_max_repeats = val.as<int>(); return true; }
+    else if (!strcmp(key, "chatbot_qso_depth")) { s.chatbot_qso_depth = val.as<int>(); return true; }
+    else if (!strcmp(key, "text_font_size"))    { s.text_font_size = val.as<int>(); return true; }
+    else if (!strcmp(key, "ext_key_iambic"))    { s.ext_key_iambic = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "paddle_swap"))       { s.paddle_swap = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "ext_key_swap"))      { s.ext_key_swap = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "screen_flip"))       { s.screen_flip = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "word_max_length"))   { s.word_max_length = val.as<int>(); return true; }
+    else if (!strcmp(key, "sleep_timeout_min")) { s.sleep_timeout_min = val.as<int>(); return true; }
+    else if (!strcmp(key, "quick_start"))       { s.quick_start = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "adaptive_speed"))    { s.adaptive_speed = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "qso_max_words"))     { s.qso_max_words = val.as<int>(); return true; }
+    else if (!strcmp(key, "adsr_ms"))           { s.adsr_ms = val.as<int>(); return true; }
+    else if (!strcmp(key, "curtisb_dit_pct"))   { s.curtisb_dit_pct = val.as<int>(); return true; }
+    else if (!strcmp(key, "curtisb_dah_pct"))   { s.curtisb_dah_pct = val.as<int>(); return true; }
+    else if (!strcmp(key, "inet_proto"))        { s.inet_proto = val.as<int>(); return true; }
+    else if (!strcmp(key, "cwcom_wire"))        { s.cwcom_wire = val.as<int>(); return true; }
+    else if (!strcmp(key, "callsign")) {
+        const char* v = val.as<const char*>();
+        if (v) { strncpy(s.callsign, v, sizeof(s.callsign)-1); s.callsign[sizeof(s.callsign)-1] = 0; }
+        return true;
+    }
+    else if (!strcmp(key, "session_size"))      { s.session_size = val.as<int>(); return true; }
+    else if (!strcmp(key, "brightness"))        { s.brightness = val.as<int>(); return true; }
+    return false;
+}
+
+bool config_settings_from_json(const char* json, size_t len)
+{
+    JsonDocument doc;
+    if (deserializeJson(doc, json, len)) return false;
+    bool changed = false;
+    for (JsonPair kv : doc.as<JsonObject>()) {
+        if (settings_field_from_json(kv.key().c_str(), kv.value()))
+            changed = true;
+    }
+    if (changed) {
+        apply_settings();
+        save_settings();
+    }
+    return changed;
+}
+
+// ── Slots (snapshots) ──────────────────────────────────────────────────────
+// Stored in NVS namespace "slots" as JSON blobs keyed by slot name.
+// Slot index stored in "slots"/"index" as a pipe-separated name list.
+
+static void slot_save_index(const char names[][17], int count)
+{
+    if (!s_storage) return;
+    char buf[256] = {};
+    int pos = 0;
+    for (int i = 0; i < count && pos < 250; i++) {
+        if (i > 0) buf[pos++] = '|';
+        int n = snprintf(buf + pos, 250 - pos, "%s", names[i]);
+        pos += n;
+    }
+    s_storage->set_string("slots", "index", buf);
+}
+
+int config_list_slots(char names[][17], int max_slots)
+{
+    if (!s_storage) return 0;
+    char buf[256] = {};
+    if (!s_storage->get_string("slots", "index", buf, sizeof(buf))) return 0;
+    int count = 0;
+    char* p = buf;
+    while (*p && count < max_slots) {
+        char* sep = strchr(p, '|');
+        int len = sep ? (int)(sep - p) : (int)strlen(p);
+        if (len > 16) len = 16;
+        memcpy(names[count], p, len);
+        names[count][len] = 0;
+        count++;
+        if (!sep) break;
+        p = sep + 1;
+    }
+    return count;
+}
+
+bool config_save_slot(const char* name)
+{
+    if (!s_storage || !name || !name[0]) return false;
+    char* json = config_settings_to_json();
+    if (!json) return false;
+    s_storage->set_string("slots", name, json);
+    // Add to index if not already present
+    char names[CONFIG_MAX_SLOTS][17] = {};
+    int count = config_list_slots(names, CONFIG_MAX_SLOTS);
+    bool found = false;
+    for (int i = 0; i < count; i++) {
+        if (!strcmp(names[i], name)) { found = true; break; }
+    }
+    if (!found && count < CONFIG_MAX_SLOTS) {
+        strncpy(names[count], name, 16);
+        names[count][16] = 0;
+        count++;
+        slot_save_index(names, count);
+    }
+    free(json);
+    s_storage->commit();
+    return true;
+}
+
+bool config_load_slot(const char* name)
+{
+    if (!s_storage || !name || !name[0]) return false;
+    char buf[1024] = {};
+    if (!s_storage->get_string("slots", name, buf, sizeof(buf))) return false;
+    return config_settings_from_json(buf, strlen(buf));
+}
+
+bool config_delete_slot(const char* name)
+{
+    if (!s_storage || !name || !name[0]) return false;
+    // Remove from index
+    char names[CONFIG_MAX_SLOTS][17] = {};
+    int count = config_list_slots(names, CONFIG_MAX_SLOTS);
+    int new_count = 0;
+    char new_names[CONFIG_MAX_SLOTS][17] = {};
+    for (int i = 0; i < count; i++) {
+        if (strcmp(names[i], name) != 0) {
+            strcpy(new_names[new_count++], names[i]);
+        }
+    }
+    slot_save_index(new_names, new_count);
+    // We can't truly delete from NVS easily, but the index won't list it
+    s_storage->set_string("slots", name, "");
+    s_storage->commit();
+    return true;
 }
 
 // ── CW engine (keyer + echo modes) ────────────────────────────────────────
