@@ -179,9 +179,9 @@ void setup()
     play_V();
 
     auto sample_idle = [](int pin) -> uint32_t {
-        uint32_t mn = UINT32_MAX;
-        for (int i = 0; i < 5; i++) { mn = std::min(mn, (uint32_t)touchRead(pin)); delay(10); }
-        return mn;
+        uint32_t sum = 0;
+        for (int i = 0; i < 8; i++) { sum += touchRead(pin); delay(10); }
+        return sum / 8;
     };
     uint32_t touch_l_idle = sample_idle(PIN_TOUCH_LEFT);
     uint32_t touch_r_idle = sample_idle(PIN_TOUCH_RIGHT);
@@ -287,14 +287,14 @@ void setup()
 
     // ── Touch calibration ─────────────────────────────────────────────────
     auto sample_idle = [](int pin) -> uint32_t {
-        uint32_t mn = UINT32_MAX;
-        for (int i = 0; i < 5; i++) { mn = std::min(mn, (uint32_t)touchRead(pin)); delay(10); }
-        return mn;
+        uint32_t sum = 0;
+        for (int i = 0; i < 8; i++) { sum += touchRead(pin); delay(10); }
+        return sum / 8;
     };
     uint32_t touch_l_idle = sample_idle(PIN_TOUCH_LEFT);
     uint32_t touch_r_idle = sample_idle(PIN_TOUCH_RIGHT);
     Log.verboseln("Touch: L_idle=%d R_idle=%d on=+%d off=+%d",
-                  touch_l_idle, touch_r_idle, 4000, 2000);
+                  touch_l_idle, touch_r_idle, 4000, 2500);
 
     // ── Key input ─────────────────────────────────────────────────────────
     Log.verboseln("Key input init");

@@ -4,9 +4,9 @@
 
 // Pocket (ESP32-S3) key/paddle/encoder input.
 //
-// Paddle LEFT (PIN_PADDLE_LEFT, dit) and RIGHT (PIN_PADDLE_RIGHT, dah),
-// straight key (PIN_KEYER), are driven by GPIO-change ISRs for minimal
-// latency — critical for CW timing accuracy.
+// Paddle LEFT (PIN_PADDLE_LEFT, dit) and RIGHT (PIN_PADDLE_RIGHT, dah)
+// are driven by GPIO-change ISRs for minimal latency — critical for CW
+// timing accuracy.  PIN_KEYER is configured as MOSFET output.
 //
 // Rotary encoder position is read from ESP32Encoder (hardware PCNT).
 // Encoder button (PIN_ROT_BTN) and aux button (PIN_BUTTON) are polled at
@@ -44,7 +44,7 @@ private:
     static constexpr uint32_t LONG_PRESS_MS   = 500;
     static constexpr int      STEPS_PER_DETENT = 2;   // half-quad encoder
     static constexpr uint32_t HYST_ON         = 4000;  // press threshold above idle
-    static constexpr uint32_t HYST_OFF        = 1000;  // release threshold above idle
+    static constexpr uint32_t HYST_OFF        = 2500;  // release threshold above idle
 
     struct ButtonState {
         bool     pressed   = false;
