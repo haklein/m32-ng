@@ -5,8 +5,9 @@
 // Pocket (ESP32-S3) key/paddle/encoder input.
 //
 // Paddle LEFT (PIN_PADDLE_LEFT, dit) and RIGHT (PIN_PADDLE_RIGHT, dah)
-// are driven by GPIO-change ISRs for minimal latency — critical for CW
-// timing accuracy.  PIN_KEYER is configured as MOSFET output.
+// are polled at 500 Hz alongside touch and buttons.  Polling naturally
+// ignores contact bounce and cannot lose release events.
+// PIN_KEYER is configured as MOSFET output.
 //
 // Rotary encoder position is read from ESP32Encoder (hardware PCNT).
 // Encoder button (PIN_ROT_BTN) and aux button (PIN_BUTTON) are polled at
@@ -35,9 +36,6 @@ public:
     bool poll(KeyEvent& out) override;
     bool wait(KeyEvent& out, uint32_t timeout_ms) override;
 
-    // Called from GPIO ISRs — must be IRAM-safe.
-    void IRAM_ATTR push_from_isr(KeyEvent ev);
-
 private:
     static constexpr int      QUEUE_DEPTH     = 32;
     static constexpr int      POLL_INTERVAL_MS = 2;   // 500 Hz — critical for CW timing
@@ -45,6 +43,7 @@ private:
     static constexpr int      STEPS_PER_DETENT = 2;   // half-quad encoder
     static constexpr uint32_t HYST_ON         = 4000;  // press threshold above idle
     static constexpr uint32_t HYST_OFF        = 2500;  // release threshold above idle
+    static constexpr uint32_t MAX_TOUCH_HOLD_MS = 3000; // auto-release stuck touch
 
     struct ButtonState {
         bool     pressed   = false;
@@ -53,6 +52,7 @@ private:
     };
 
     void push(KeyEvent ev);
+    void push_release(KeyEvent ev);   // front-of-queue + brief block for releases
     void update_button(ButtonState& s, bool now_pressed, uint32_t now_ms,
                        KeyEvent short_ev, KeyEvent long_ev);
     void poll_task_body();

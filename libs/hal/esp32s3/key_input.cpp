@@ -3,39 +3,17 @@
 #include "key_input.h"
 #include <Arduino.h>
 
-// ── Global instance pointer used by the static ISRs ───────────────────────────
-static PocketKeyInput* s_instance = nullptr;
-
-// ── GPIO ISRs (IRAM-resident; minimal work — push event and yield) ────────────
-
-static void IRAM_ATTR isr_paddle_left()
-{
-    KeyEvent ev = (digitalRead(PIN_PADDLE_LEFT) == LOW)
-                  ? KeyEvent::PADDLE_DIT_DOWN : KeyEvent::PADDLE_DIT_UP;
-    s_instance->push_from_isr(ev);
-}
-
-static void IRAM_ATTR isr_paddle_right()
-{
-    KeyEvent ev = (digitalRead(PIN_PADDLE_RIGHT) == LOW)
-                  ? KeyEvent::PADDLE_DAH_DOWN : KeyEvent::PADDLE_DAH_UP;
-    s_instance->push_from_isr(ev);
-}
-
 // ── PocketKeyInput ─────────────────────────────────────────────────────────────
 
 PocketKeyInput::PocketKeyInput(uint32_t touch_l_idle, uint32_t touch_r_idle)
     : touch_l_on_(touch_l_idle + HYST_ON),   touch_l_off_(touch_l_idle + HYST_OFF)
     , touch_r_on_(touch_r_idle + HYST_ON),   touch_r_off_(touch_r_idle + HYST_OFF)
 {
-    s_instance  = this;
     event_queue_ = xQueueCreate(QUEUE_DEPTH, sizeof(KeyEvent));
 
-    // Configure paddle pins — active low, ISR on any edge.
+    // Configure paddle pins — active low, polled at 500 Hz alongside touch/buttons.
     pinMode(PIN_PADDLE_LEFT,  INPUT_PULLUP);
     pinMode(PIN_PADDLE_RIGHT, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(PIN_PADDLE_LEFT),  isr_paddle_left,  CHANGE);
-    attachInterrupt(digitalPinToInterrupt(PIN_PADDLE_RIGHT), isr_paddle_right, CHANGE);
 
     // PIN_KEYER is the MOSFET output for keying an external transmitter.
     pinMode(PIN_KEYER, OUTPUT);
@@ -60,11 +38,8 @@ PocketKeyInput::~PocketKeyInput()
         vTaskDelete(poll_task_handle_);
         poll_task_handle_ = nullptr;
     }
-    detachInterrupt(digitalPinToInterrupt(PIN_PADDLE_LEFT));
-    detachInterrupt(digitalPinToInterrupt(PIN_PADDLE_RIGHT));
     digitalWrite(PIN_KEYER, LOW);
     if (event_queue_) vQueueDelete(event_queue_);
-    s_instance = nullptr;
 }
 
 // ── IKeyInput ──────────────────────────────────────────────────────────────────
@@ -82,16 +57,16 @@ bool PocketKeyInput::wait(KeyEvent& out, uint32_t timeout_ms)
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-void IRAM_ATTR PocketKeyInput::push_from_isr(KeyEvent ev)
-{
-    BaseType_t woken = pdFALSE;
-    xQueueSendFromISR(event_queue_, &ev, &woken);
-    portYIELD_FROM_ISR(woken);
-}
-
 void PocketKeyInput::push(KeyEvent ev)
 {
     xQueueSend(event_queue_, &ev, 0);   // drop if full (task context, non-blocking)
+}
+
+void PocketKeyInput::push_release(KeyEvent ev)
+{
+    // Release events go to the front of the queue so they are never starved
+    // by a burst of other events — a lost release leaves the keyer stuck.
+    xQueueSendToFront(event_queue_, &ev, pdMS_TO_TICKS(5));
 }
 
 void PocketKeyInput::update_button(ButtonState& s, bool now_pressed,
@@ -128,6 +103,10 @@ void PocketKeyInput::poll_task_body()
     int64_t  last_enc_count   = 0;
     bool     touch_left_prev  = false;
     bool     touch_right_prev = false;
+    uint32_t touch_left_down_ms  = 0;   // timestamp of last DOWN (0 = not pressed)
+    uint32_t touch_right_down_ms = 0;
+    bool     ext_left_prev  = false;    // polled shadow of external paddle GPIO
+    bool     ext_right_prev = false;
     ButtonState enc_btn, aux_btn;
 
     while (true) {
@@ -155,6 +134,25 @@ void PocketKeyInput::poll_task_body()
         update_button(aux_btn, digitalRead(PIN_BUTTON) == LOW, now,
                       KeyEvent::BUTTON_AUX_SHORT, KeyEvent::BUTTON_AUX_LONG);
 
+        // ── External paddles ──────────────────────────────────────────────────
+        // Polled at 500 Hz — same as touch.  At 35 WPM a dit is 34 ms so
+        // 2 ms poll gives ≤ 6 % jitter.  Polling naturally ignores contact
+        // bounce (only one sample per 2 ms) and can never lose a release event.
+        {
+            bool left_now  = (digitalRead(PIN_PADDLE_LEFT)  == LOW);
+            bool right_now = (digitalRead(PIN_PADDLE_RIGHT) == LOW);
+            if (left_now != ext_left_prev) {
+                push(left_now ? KeyEvent::PADDLE_DIT_DOWN
+                              : KeyEvent::PADDLE_DIT_UP);
+                ext_left_prev = left_now;
+            }
+            if (right_now != ext_right_prev) {
+                push(right_now ? KeyEvent::PADDLE_DAH_DOWN
+                               : KeyEvent::PADDLE_DAH_UP);
+                ext_right_prev = right_now;
+            }
+        }
+
         // ── Touch left ────────────────────────────────────────────────────────
         // Per-strip hysteresis: press requires > ON threshold, release requires
         // < OFF threshold.  Eliminates edge flickering with zero latency cost.
@@ -164,8 +162,22 @@ void PocketKeyInput::poll_task_body()
                 ? (val >= touch_l_off_)   // stay pressed until below OFF
                 : (val > touch_l_on_);    // require above ON to press
             if (touch_l != touch_left_prev) {
-                push(touch_l ? KeyEvent::TOUCH_LEFT_DOWN : KeyEvent::TOUCH_LEFT_UP);
+                if (touch_l) {
+                    push(KeyEvent::TOUCH_LEFT_DOWN);
+                    touch_left_down_ms = now;
+                } else {
+                    push_release(KeyEvent::TOUCH_LEFT_UP);
+                    touch_left_down_ms = 0;
+                }
                 touch_left_prev = touch_l;
+            } else if (touch_l && touch_left_down_ms &&
+                       (now - touch_left_down_ms) > MAX_TOUCH_HOLD_MS) {
+                // Safety: auto-release stuck touch — no legitimate CW hold
+                // lasts 3 seconds.  Prevents runaway dits/dahs from sensor
+                // glitches or lost UP events.
+                push_release(KeyEvent::TOUCH_LEFT_UP);
+                touch_left_prev   = false;
+                touch_left_down_ms = 0;
             }
         }
 
@@ -176,8 +188,19 @@ void PocketKeyInput::poll_task_body()
                 ? (val >= touch_r_off_)
                 : (val > touch_r_on_);
             if (touch_r != touch_right_prev) {
-                push(touch_r ? KeyEvent::TOUCH_RIGHT_DOWN : KeyEvent::TOUCH_RIGHT_UP);
+                if (touch_r) {
+                    push(KeyEvent::TOUCH_RIGHT_DOWN);
+                    touch_right_down_ms = now;
+                } else {
+                    push_release(KeyEvent::TOUCH_RIGHT_UP);
+                    touch_right_down_ms = 0;
+                }
                 touch_right_prev = touch_r;
+            } else if (touch_r && touch_right_down_ms &&
+                       (now - touch_right_down_ms) > MAX_TOUCH_HOLD_MS) {
+                push_release(KeyEvent::TOUCH_RIGHT_UP);
+                touch_right_prev   = false;
+                touch_right_down_ms = 0;
             }
         }
 
