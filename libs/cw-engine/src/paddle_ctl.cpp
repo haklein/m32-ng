@@ -43,20 +43,23 @@ LeverState PaddleCtl::combine(bool dit, bool dah, LeverState prev)
 
 void PaddleCtl::tick()
 {
-    // No debounce — the iambic keyer state machine handles all timing.
-    // Touch sensors don't bounce; mechanical contacts are sampled at ~1 kHz
-    // which is slow enough to skip contact chatter.  Any remaining glitches
-    // are harmless because the keyer decides at element boundaries, not on
-    // every lever transition.
+    unsigned long now = millis_cb_();
     bool changed = false;
 
+    // Debounce: require raw state to be stable for debounce_ms_ before
+    // propagating to stable.  Filters mechanical contact bounce that the
+    // 500 Hz poll can pick up as phantom press/release.
     if (dit_.raw != dit_.stable) {
-        dit_.stable = dit_.raw;
-        changed = true;
+        if ((now - dit_.changed) >= debounce_ms_) {
+            dit_.stable = dit_.raw;
+            changed = true;
+        }
     }
     if (dah_.raw != dah_.stable) {
-        dah_.stable = dah_.raw;
-        changed = true;
+        if ((now - dah_.changed) >= debounce_ms_) {
+            dah_.stable = dah_.raw;
+            changed = true;
+        }
     }
 
     if (changed) {

@@ -135,9 +135,8 @@ void PocketKeyInput::poll_task_body()
                       KeyEvent::BUTTON_AUX_SHORT, KeyEvent::BUTTON_AUX_LONG);
 
         // ── External paddles ──────────────────────────────────────────────────
-        // Polled at 500 Hz — same as touch.  At 35 WPM a dit is 34 ms so
-        // 2 ms poll gives ≤ 6 % jitter.  Polling naturally ignores contact
-        // bounce (only one sample per 2 ms) and can never lose a release event.
+        // Polled at 1 kHz — same as touch.  Polling cannot lose a release
+        // event; PaddleCtl debounce (2 ms) filters contact bounce.
         {
             bool left_now  = (digitalRead(PIN_PADDLE_LEFT)  == LOW);
             bool right_now = (digitalRead(PIN_PADDLE_RIGHT) == LOW);

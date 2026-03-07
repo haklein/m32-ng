@@ -14,7 +14,7 @@
 // ~500 Hz with software debounce; short (<500 ms) vs long press is detected
 // at release time.
 //
-// Touch strips (PIN_TOUCH_LEFT / PIN_TOUCH_RIGHT) are polled at 500 Hz via
+// Touch strips (PIN_TOUCH_LEFT / PIN_TOUCH_RIGHT) are polled at 1 kHz via
 // touchRead() with per-strip hysteresis thresholds for zero-latency-cost
 // debouncing.  At 35 WPM a dit is 34 ms; 2 ms poll gives ≤ 6 % jitter.
 //
@@ -38,7 +38,7 @@ public:
 
 private:
     static constexpr int      QUEUE_DEPTH     = 32;
-    static constexpr int      POLL_INTERVAL_MS = 2;   // 500 Hz — critical for CW timing
+    static constexpr int      POLL_INTERVAL_MS = 1;   // 1 kHz
     static constexpr uint32_t LONG_PRESS_MS   = 500;
     static constexpr int      STEPS_PER_DETENT = 2;   // half-quad encoder
     static constexpr uint32_t HYST_ON         = 4000;  // press threshold above idle
