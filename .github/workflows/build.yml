@@ -153,28 +153,36 @@ jobs:
                   versions = json.load(f).get("versions", [])
 
           # Promote any untagged dev entries whose commits now have tags
+          existing_tagged = {v["version"] for v in versions if v["tag"]}
           promoted = []
-          for v in versions:
+          for v in versions[:]:  # iterate over copy
               if v["tag"]:
                   continue
               found_tag = tag_for_commit(v["commit"])
-              if found_tag:
-                  new_ver = found_tag.lstrip("v")
-                  new_dir = "firmware/" + found_tag
-                  # Rename firmware directory and update its manifest
-                  if os.path.isdir(v["dir"]) and not os.path.isdir(new_dir):
-                      os.rename(v["dir"], new_dir)
-                  mf = os.path.join(new_dir, "manifest.json")
-                  if os.path.exists(mf):
-                      with open(mf) as f:
-                          manifest = json.load(f)
-                      manifest["version"] = new_ver
-                      with open(mf, "w") as f:
-                          json.dump(manifest, f, indent=2)
-                  v["version"] = new_ver
-                  v["tag"] = found_tag
-                  v["dir"] = new_dir
-                  promoted.append(found_tag)
+              if not found_tag:
+                  continue
+              new_ver = found_tag.lstrip("v")
+              if new_ver in existing_tagged:
+                  # Tagged release already exists — just remove the dev duplicate
+                  versions.remove(v)
+                  promoted.append(found_tag + " (dedup)")
+                  continue
+              new_dir = "firmware/" + found_tag
+              # Rename firmware directory and update its manifest
+              if os.path.isdir(v["dir"]) and not os.path.isdir(new_dir):
+                  os.rename(v["dir"], new_dir)
+              mf = os.path.join(new_dir, "manifest.json")
+              if os.path.exists(mf):
+                  with open(mf) as f:
+                      manifest = json.load(f)
+                  manifest["version"] = new_ver
+                  with open(mf, "w") as f:
+                      json.dump(manifest, f, indent=2)
+              v["version"] = new_ver
+              v["tag"] = found_tag
+              v["dir"] = new_dir
+              existing_tagged.add(new_ver)
+              promoted.append(found_tag)
 
           # Remove existing entry for this version (re-build of same commit)
           ver = os.environ["VERSION"]
