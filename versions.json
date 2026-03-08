@@ -1,0 +1,102 @@
+{
+  "versions": [
+    {
+      "version": "0.0.1",
+      "tag": "v0.0.1",
+      "date": "2026-03-02T18:43:24+01:00",
+      "commit": "668f9b3",
+      "dir": "firmware/v0.0.1"
+    },
+    {
+      "version": "0.0.2",
+      "tag": "v0.0.2",
+      "date": "2026-03-04T11:07:22+01:00",
+      "commit": "4e4aec9",
+      "dir": "firmware/v0.0.2"
+    },
+    {
+      "version": "0.0.3",
+      "tag": "v0.0.3",
+      "date": "2026-03-06T23:45:51+01:00",
+      "commit": "127fd4a",
+      "dir": "firmware/v0.0.3"
+    },
+    {
+      "version": "0.0.4",
+      "tag": "v0.0.4",
+      "date": "2026-03-07T08:23:33+01:00",
+      "commit": "eb71ad6",
+      "dir": "firmware/v0.0.4"
+    },
+    {
+      "version": "dev-8efa8ec",
+      "tag": null,
+      "date": "2026-03-08T09:34:38+01:00",
+      "commit": "8efa8ec",
+      "dir": "firmware/dev-8efa8ec"
+    },
+    {
+      "version": "dev-a252b07",
+      "tag": null,
+      "date": "2026-03-07T23:22:03+01:00",
+      "commit": "a252b07",
+      "dir": "firmware/dev-a252b07"
+    },
+    {
+      "version": "dev-eb71ad6",
+      "tag": null,
+      "date": "2026-03-07T08:23:33+01:00",
+      "commit": "eb71ad6",
+      "dir": "firmware/dev-eb71ad6"
+    },
+    {
+      "version": "dev-9cfa18d",
+      "tag": null,
+      "date": "2026-03-07T00:09:18+01:00",
+      "commit": "9cfa18d",
+      "dir": "firmware/dev-9cfa18d"
+    },
+    {
+      "version": "dev-127fd4a",
+      "tag": null,
+      "date": "2026-03-06T23:45:51+01:00",
+      "commit": "127fd4a",
+      "dir": "firmware/dev-127fd4a"
+    },
+    {
+      "version": "dev-c73ba93",
+      "tag": null,
+      "date": "2026-03-06T20:56:29+01:00",
+      "commit": "c73ba93",
+      "dir": "firmware/dev-c73ba93"
+    },
+    {
+      "version": "dev-35bb3ee",
+      "tag": null,
+      "date": "2026-03-06T20:27:23+01:00",
+      "commit": "35bb3ee",
+      "dir": "firmware/dev-35bb3ee"
+    },
+    {
+      "version": "dev-f85e0ed",
+      "tag": null,
+      "date": "2026-03-06T20:19:33+01:00",
+      "commit": "f85e0ed",
+      "dir": "firmware/dev-f85e0ed"
+    },
+    {
+      "version": "dev-54e465f",
+      "tag": null,
+      "date": "2026-03-06T20:14:02+01:00",
+      "commit": "54e465f",
+      "dir": "firmware/dev-54e465f"
+    },
+    {
+      "version": "dev-c5b5814",
+      "tag": null,
+      "date": "2026-03-06T20:11:25+01:00",
+      "commit": "c5b5814",
+      "dir": "firmware/dev-c5b5814"
+    }
+  ]
+}
