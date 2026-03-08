@@ -161,6 +161,15 @@ static void handle_api_config_post(AsyncWebServerRequest* req)
     s_post_body = "";
 }
 
+static void handle_api_version(AsyncWebServerRequest* req)
+{
+#ifdef GIT_VERSION
+    req->send(200, "application/json", "{\"version\":\"" GIT_VERSION "\"}");
+#else
+    req->send(200, "application/json", "{\"version\":\"unknown\"}");
+#endif
+}
+
 static void handle_api_meta(AsyncWebServerRequest* req)
 {
     const FieldMeta* meta;
@@ -286,7 +295,7 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
 </style>
 </head>
 <body>
-<h1>Morserino-32 NG</h1>
+<h1>Morserino-32 NG <span id="ver" style="font-size:.5em;color:#888"></span></h1>
 <div class="tabs" id="tabs"></div>
 <div id="panels"></div>
 
@@ -314,8 +323,9 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
 let META=[], CFG={}, groups=[];
 
 async function init(){
-  const [metaR, cfgR]=await Promise.all([fetch('/api/meta'),fetch('/api/config')]);
+  const [metaR, cfgR, verR]=await Promise.all([fetch('/api/meta'),fetch('/api/config'),fetch('/api/version')]);
   META=await metaR.json(); CFG=await cfgR.json();
+  try{const v=await verR.json();document.getElementById('ver').textContent=v.version;}catch(e){}
   groups=[...new Set(META.map(m=>m.group))];
   buildUI();
   loadSlots();
@@ -510,6 +520,8 @@ void screenshot_server_start()
                  nullptr, handle_body);
     s_server->on("/api/meta", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_meta(r); });
+    s_server->on("/api/version", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_version(r); });
 
     // Slots API (specific routes first)
     s_server->on("/api/slots/save", HTTP_GET,

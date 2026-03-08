@@ -270,10 +270,27 @@ void setup()
         esp_deep_sleep_start();                      // does not return
     };
 
-    // Splash while peripherals init
-    lv_obj_t* splash = lv_label_create(lv_screen_active());
-    lv_label_set_text(splash, "M32 NG");
-    lv_obj_center(splash);
+    // Splash screen — logo + version, shown during peripheral init
+    unsigned long splash_start = millis();
+    lv_obj_t* splash_scr = lv_screen_active();
+    lv_obj_set_style_bg_color(splash_scr, lv_color_hex(0x000000), 0);
+
+    // Logo (RGB565, white on black)
+    #include "logo.h"
+    lv_obj_t* logo = lv_image_create(splash_scr);
+    lv_image_set_src(logo, &logo_img);
+    lv_obj_align(logo, LV_ALIGN_CENTER, 0, -20);
+
+    // Version + status label
+    lv_obj_t* splash_lbl = lv_label_create(splash_scr);
+    lv_obj_set_style_text_color(splash_lbl, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_text_font(splash_lbl, &lv_font_montserrat_20, 0);
+#ifdef GIT_VERSION
+    lv_label_set_text(splash_lbl, GIT_VERSION);
+#else
+    lv_label_set_text(splash_lbl, "");
+#endif
+    lv_obj_align(splash_lbl, LV_ALIGN_CENTER, 0, 50);
     lv_timer_handler();
 
     // ── SPIFFS (sound effects, future file storage) ─────────────────────
@@ -323,6 +340,11 @@ void setup()
                  mac[4], mac[5]);
         Log.verboseln("AP SSID: %s", s_ap_ssid);
     }
+    // Show version for at least 3 seconds before WiFi status replaces it
+    {
+        unsigned long ver_elapsed = millis() - splash_start;
+        if (ver_elapsed < 3000) delay(3000 - ver_elapsed);
+    }
     // Try connecting with saved credentials
     {
         char wifi_ssid[33] = {};
@@ -330,13 +352,17 @@ void setup()
         if (load_wifi_creds(wifi_ssid, sizeof(wifi_ssid),
                             wifi_pass, sizeof(wifi_pass))) {
             Log.noticeln("WiFi: connecting to '%s'", wifi_ssid);
-            lv_label_set_text(splash, "Connecting WiFi...");
+            lv_label_set_text(splash_lbl, "Connecting WiFi...");
             lv_timer_handler();
             bool ok = s_network->wifi_connect(wifi_ssid, wifi_pass, 8000);
             Log.noticeln("WiFi: %s", ok ? "connected" : "failed");
             if (ok) screenshot_server_start();
         }
     }
+
+    // ── Ensure splash shows for at least 4 seconds ─────────────────────
+    unsigned long elapsed = millis() - splash_start;
+    if (elapsed < 4000) delay(4000 - elapsed);
 
     // ── CW engine + UI ────────────────────────────────────────────────────
     app_ui_init(esp_random());
