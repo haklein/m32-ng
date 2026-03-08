@@ -8,7 +8,7 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] Morse decoder (character-by-character, word-space detection)
 - [x] Decoder word-gap detection (~8 dit-lengths silence → emits word space)
 - [x] Sidetone via I2S audio HAL
-- [x] No-debounce paddle controller (PaddleCtl — polled, no latency)
+- [x] Debounced paddle controller (PaddleCtl — 2 ms debounce, 1 kHz poll)
 - [x] lever_upgrade latch for mid-element opposite paddle detection
 - [x] ADSR envelope shaping (configurable 1–15 ms attack/release)
 
@@ -98,6 +98,9 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 ## Key Input
 - [x] Touch paddle input (dit/dah via capacitive touch strips)
 - [x] External paddle jack: iambic or straight key mode (Ext Key setting)
+- [x] External paddles polled at 1 kHz (no ISRs — eliminates bounce-induced queue overflow)
+- [x] Touch sensor 3-second watchdog (auto-release stuck touch readings)
+- [x] Priority UP events via front-of-queue (`xQueueSendToFront`) — prevents lost releases
 - [x] Dit/dah swap setting for touch paddles
 - [x] Dit/dah swap setting for external key input (iambic mode)
 - [x] MOSFET keyer output (GPIO41) — keys external transmitter in keyer, generator, echo, chatbot modes
@@ -109,9 +112,11 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] Screen upside-down rotation (live flip via Screen Flip checkbox in Settings)
 - [x] Backlight brightness control (5 steps, persisted, long FN press to cycle)
 - [x] Status bar: mode icons, compact WPM format (Farnsworth, effective WPM), graphical battery, WiFi indicator (green=connected, orange=AP)
+- [x] Splash screen with M32 logo (RGB565, SVG-converted), git version, WiFi status (4 s minimum)
 
 ## Power Management
 - [x] Deep sleep with configurable timeout (0=disabled, 1–60 min)
+- [x] Sleep timer resets from both UI and CW tasks (keying keeps device awake)
 - [x] Battery voltage measurement via ADC
 - [x] Wake via aux button (GPIO0 deep sleep wakeup)
 
@@ -120,7 +125,8 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] WiFi station mode (connect to existing network)
 - [x] WiFi setup screen with QR code (dynamic size based on screen)
 - [x] Web configuration SPA (embedded PROGMEM, dark theme, tabbed settings)
-- [x] REST API: GET/POST `/api/config`, GET `/api/meta`, GET `/api/screenshot`
+- [x] REST API: GET/POST `/api/config`, GET `/api/meta`, GET `/api/screenshot`, GET `/api/version`
+- [x] Git version/tag displayed in web interface header
 - [x] Settings slots via web API: `/api/slots`, `/api/slots/save`, `/api/slots/load`, `/api/slots/delete`
 - [x] JSON download/upload of all settings
 - [x] Field metadata table drives both JSON API and web UI dynamically
@@ -145,8 +151,13 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] User manual (`manual.md`)
 - [x] Implementation progress tracker (`progress.md`)
 
-## Build Targets
+## Build & CI
 - [x] `pocketwroom` — ESP32-S3 WROOM hardware target
 - [x] `simulator` — SDL2 desktop simulator
 - [x] `native` — unit test target
 - [ ] `m5core2` — M5Stack Core2 (builds but untested)
+- [x] GitHub Actions CI: build on push, deploy firmware to GitHub Pages
+- [x] Web flasher (ESP Web Tools) with version selector (releases + dev builds)
+- [x] Automatic dev→release promotion when tags are detected on existing commits
+- [x] `GIT_VERSION` build-time define via PlatformIO extra_script (`support/git_version.py`)
+- [x] `support/svg_to_lvgl.py` — SVG to LVGL RGB565 C header converter
