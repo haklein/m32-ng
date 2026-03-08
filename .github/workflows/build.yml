@@ -47,8 +47,9 @@ jobs:
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(git log -1 --format=%cI)
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
+          # Detect tag on HEAD regardless of trigger (branch push, tag push, etc.)
+          TAG=$(git tag --points-at HEAD | grep '^v' | sort -V | tail -1)
+          if [[ -n "$TAG" ]]; then
             VER="${TAG#v}"
             echo "version=$VER"   >> "$GITHUB_OUTPUT"
             echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
@@ -139,14 +140,20 @@ jobs:
 
           # Remove existing entry for this version (re-build of same commit)
           ver = os.environ["VERSION"]
+          commit = os.environ["COMMIT"]
+          tag = os.environ["TAG"] or None
           versions = [v for v in versions if v["version"] != ver]
+
+          # If this is a tagged build, also remove any dev entry for the same commit
+          if tag:
+              versions = [v for v in versions if not (v["commit"] == commit and not v["tag"])]
 
           # Add new entry
           entry = {
               "version": ver,
-              "tag": os.environ["TAG"] or None,
+              "tag": tag,
               "date": os.environ["DATE"],
-              "commit": os.environ["COMMIT"],
+              "commit": commit,
               "dir": "firmware/" + os.environ["DIR"],
           }
           versions.append(entry)
