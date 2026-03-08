@@ -128,15 +128,53 @@ jobs:
           # ── Update versions.json ─────────────────────────────────────────
           cd _site
           python3 << 'PYEOF'
-          import json, os
+          import json, os, subprocess, shutil
 
           VERSIONS_FILE = "versions.json"
           MAX_DEV_BUILDS = 10
+
+          def tag_for_commit(short_hash):
+              """Check if a commit has a v* tag in the repo."""
+              try:
+                  out = subprocess.check_output(
+                      ["git", "-C", "..", "tag", "--points-at", short_hash],
+                      stderr=subprocess.DEVNULL
+                  ).decode().strip()
+                  for line in out.splitlines():
+                      if line.startswith("v"):
+                          return line
+              except Exception:
+                  pass
+              return None
 
           versions = []
           if os.path.exists(VERSIONS_FILE):
               with open(VERSIONS_FILE) as f:
                   versions = json.load(f).get("versions", [])
+
+          # Promote any untagged dev entries whose commits now have tags
+          promoted = []
+          for v in versions:
+              if v["tag"]:
+                  continue
+              found_tag = tag_for_commit(v["commit"])
+              if found_tag:
+                  new_ver = found_tag.lstrip("v")
+                  new_dir = "firmware/" + found_tag
+                  # Rename firmware directory and update its manifest
+                  if os.path.isdir(v["dir"]) and not os.path.isdir(new_dir):
+                      os.rename(v["dir"], new_dir)
+                  mf = os.path.join(new_dir, "manifest.json")
+                  if os.path.exists(mf):
+                      with open(mf) as f:
+                          manifest = json.load(f)
+                      manifest["version"] = new_ver
+                      with open(mf, "w") as f:
+                          json.dump(manifest, f, indent=2)
+                  v["version"] = new_ver
+                  v["tag"] = found_tag
+                  v["dir"] = new_dir
+                  promoted.append(found_tag)
 
           # Remove existing entry for this version (re-build of same commit)
           ver = os.environ["VERSION"]
@@ -167,7 +205,6 @@ jobs:
           for old in untagged[MAX_DEV_BUILDS:]:
               d = old["dir"]
               if os.path.isdir(d):
-                  import shutil
                   shutil.rmtree(d)
 
           untagged = untagged[:MAX_DEV_BUILDS]
@@ -175,6 +212,9 @@ jobs:
 
           with open(VERSIONS_FILE, "w") as f:
               json.dump({"versions": versions}, f, indent=2)
+
+          if promoted:
+              print(f"Promoted dev builds to releases: {promoted}")
           PYEOF
 
           # ── Copy static installer page ───────────────────────────────────
