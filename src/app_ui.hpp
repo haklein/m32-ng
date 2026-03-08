@@ -2318,6 +2318,7 @@ static lv_obj_t* build_inet_cw_active_screen()
 // key.  Must NOT call any LVGL or MorseTrainer functions.
 static void route_cw(KeyEvent ev)
 {
+    reset_activity_timer();   // keep sleep timer alive while keying
     switch (ev) {
         // ── Touch paddles (always iambic, obey paddle_swap) ─────────────
         case KeyEvent::TOUCH_LEFT_DOWN:
