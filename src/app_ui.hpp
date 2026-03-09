@@ -1019,20 +1019,33 @@ static void apply_settings()
     update_status_bar_info();
 }
 
+// ── Koch filter helper ────────────────────────────────────────────────────
+// Returns the Koch character set for the current lesson, or empty if Koch is off.
+static std::string koch_charset()
+{
+    if (s_settings.koch_lesson == 0) return {};
+    int idx = std::min((int)s_settings.koch_order, (int)(KOCH_ORDER_COUNT - 1));
+    int n = std::min((int)s_settings.koch_lesson, KOCH_MAX_LESSON);
+    return std::string(KOCH_ORDERS[idx], n);
+}
+
+// Check if all characters in a word are within the Koch set.
+static bool koch_allows(const std::string& word, const std::string& allowed)
+{
+    for (char c : word) {
+        if (c == ' ') continue;  // spaces always OK
+        if (allowed.find(std::tolower((unsigned char)c)) == std::string::npos)
+            return false;
+    }
+    return true;
+}
+
 // ── Content phrase generator ───────────────────────────────────────────────
 // Returns the next training phrase according to the current content settings.
 static std::string content_phrase()
 {
-    // Koch mode: character groups using the first N Koch chars
-    if (s_settings.koch_lesson > 0) {
-        int idx = std::min((int)s_settings.koch_order,
-                           (int)(KOCH_ORDER_COUNT - 1));
-        const char* order = KOCH_ORDERS[idx];
-        int n = std::min((int)s_settings.koch_lesson, KOCH_MAX_LESSON);
-        int glen = (int)s_settings.word_max_length;
-        if (glen <= 0) glen = 5;  // default group size when unlimited
-        return s_gen->random_chars_from_set(std::string(order, n), glen);
-    }
+    std::string koch = koch_charset();
+
     // Collect enabled content types
     int types[5]; int nt = 0;
     if (s_settings.cont_words)   types[nt++] = 0;
@@ -1041,17 +1054,48 @@ static std::string content_phrase()
     if (s_settings.cont_chars)   types[nt++] = 3;
     if (s_settings.cont_qso)    types[nt++] = 4;
     int ml = (int)s_settings.word_max_length;
-    if (nt == 0) return s_gen->random_word(ml);   // fallback: always something
-    int choice = types[std::uniform_int_distribution<int>(0, nt - 1)(s_rng)];
-    static const RandomOption char_opts[] = { OPT_ALPHA, OPT_ALNUM, OPT_ALL };
-    switch (choice) {
-        case 0: return s_gen->random_word(ml);
-        case 1: return s_gen->random_abbrev(ml);
-        case 2: return s_gen->random_callsign(ml);
-        case 3: return s_gen->random_chars(
-                    ml > 0 ? ml : 5,
-                    char_opts[std::min((int)s_settings.chars_group, 2)]);
-        case 4: return s_gen->random_qso_phrase((int)s_settings.qso_max_words);
+    if (nt == 0) types[nt++] = 0;   // fallback: words
+
+    // Try up to 50 times to get a Koch-compatible phrase
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        int choice = types[std::uniform_int_distribution<int>(0, nt - 1)(s_rng)];
+        std::string phrase;
+        static const RandomOption char_opts[] = { OPT_ALPHA, OPT_ALNUM, OPT_ALL };
+        switch (choice) {
+            case 0: phrase = s_gen->random_word(ml); break;
+            case 1: phrase = s_gen->random_abbrev(ml); break;
+            case 2: phrase = s_gen->random_callsign(ml); break;
+            case 3:
+                if (!koch.empty()) {
+                    // Koch + chars: use Koch set filtered by chars_group
+                    std::string filtered;
+                    for (char c : koch) {
+                        bool alpha = (c >= 'a' && c <= 'z');
+                        bool num   = (c >= '0' && c <= '9');
+                        switch (s_settings.chars_group) {
+                            case 0: if (alpha) filtered += c; break;          // Alpha
+                            case 1: if (alpha || num) filtered += c; break;   // Alpha+Num
+                            default: filtered += c; break;                    // All
+                        }
+                    }
+                    if (filtered.empty()) filtered = koch;  // fallback
+                    int glen = ml > 0 ? ml : 5;
+                    phrase = s_gen->random_chars_from_set(filtered, glen);
+                } else {
+                    phrase = s_gen->random_chars(
+                        ml > 0 ? ml : 5,
+                        char_opts[std::min((int)s_settings.chars_group, 2)]);
+                }
+                break;
+            case 4: phrase = s_gen->random_qso_phrase((int)s_settings.qso_max_words); break;
+        }
+        if (koch.empty() || koch_allows(phrase, koch))
+            return phrase;
+    }
+    // All attempts failed — generate random chars from Koch set as fallback
+    if (!koch.empty()) {
+        int glen = ml > 0 ? ml : 5;
+        return s_gen->random_chars_from_set(koch, glen);
     }
     return s_gen->random_word(ml);
 }
