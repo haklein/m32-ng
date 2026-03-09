@@ -192,6 +192,8 @@ static volatile int   s_decoder_est_wpm = 0;
 // ── Web API state ────────────────────────────────────────────────────────
 static std::string s_text_accum;               // accumulated text for /api/text
 static volatile int s_pending_mode_idx = -2;   // deferred mode switch (-2 = none)
+static volatile bool s_pending_apply   = false; // deferred apply_settings from web task
+static volatile int  s_pending_pause   = 0;    // 1=pause, 2=resume, 0=none
 
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
@@ -378,8 +380,8 @@ bool config_settings_from_json(const char* json, size_t len)
             changed = true;
     }
     if (changed) {
-        apply_settings();
         save_settings();
+        s_pending_apply = true;  // defer to main loop (web task is not thread-safe)
     }
     return changed;
 }
@@ -522,7 +524,8 @@ StatusInfo config_get_status()
     StatusInfo s = {};
     s.mode = mode_name(s_active_mode);
     s.paused = (s_active_mode == ActiveMode::GENERATOR ||
-                s_active_mode == ActiveMode::ECHO) && s_gen_paused;
+                s_active_mode == ActiveMode::ECHO ||
+                s_active_mode == ActiveMode::CHATBOT) && s_gen_paused;
     s.wpm = s_settings.wpm;
 #ifdef BOARD_POCKETWROOM
     s.decoder_signal = s_decoder_signal_level;
@@ -548,14 +551,10 @@ bool config_request_mode(const char* mode)
 bool config_toggle_pause()
 {
     if (s_active_mode != ActiveMode::GENERATOR &&
-        s_active_mode != ActiveMode::ECHO) return false;
-    s_gen_paused = !s_gen_paused;
-    if (s_gen_paused) {
-        s_trainer->set_idle();
-    } else {
-        s_session_count = 0;
-        s_trainer->set_playing();
-    }
+        s_active_mode != ActiveMode::ECHO &&
+        s_active_mode != ActiveMode::CHATBOT) return false;
+    // Defer to main loop — trainer/audio are not thread-safe
+    s_pending_pause = s_gen_paused ? 2 : 1;  // toggle: paused→resume, playing→pause
     return true;
 }
 
@@ -3648,6 +3647,28 @@ static void app_ui_tick()
                     s_stack.pop();
                 lv_indev_set_group(s_enc_indev, s_menu_group);
                 push_mode_screen(idx);
+            }
+        }
+    }
+
+    // ── Deferred settings apply from web API ─────────────────────────────
+    if (s_pending_apply) {
+        s_pending_apply = false;
+        apply_settings();
+    }
+
+    // ── Deferred pause/resume from web API ───────────────────────────────
+    {
+        int p = s_pending_pause;
+        if (p != 0) {
+            s_pending_pause = 0;
+            if (p == 1) {  // pause
+                s_gen_paused = true;
+                s_trainer->set_idle();
+            } else {       // resume
+                s_gen_paused = false;
+                s_session_count = 0;
+                s_trainer->set_playing();
             }
         }
     }

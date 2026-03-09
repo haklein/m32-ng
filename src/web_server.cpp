@@ -333,7 +333,8 @@ static void handle_plain(AsyncWebServerRequest* req)
 
     StatusInfo s = config_get_status();
     char* text = config_peek_text();
-    bool is_gen = (strcmp(s.mode, "generator") == 0 || strcmp(s.mode, "echo") == 0);
+    bool is_gen = (strcmp(s.mode, "generator") == 0 || strcmp(s.mode, "echo") == 0 ||
+                   strcmp(s.mode, "chatbot") == 0);
 
     String html;
     html.reserve(2048);
@@ -523,7 +524,7 @@ async function pollStatus(){
     // Update pause button
     const pb=document.getElementById('pause-btn');
     pb.textContent=s.paused?'Resume':'Pause';
-    pb.style.display=(s.mode==='generator'||s.mode==='echo')?'':'none';
+    pb.style.display=(s.mode==='generator'||s.mode==='echo'||s.mode==='chatbot')?'':'none';
     // Highlight active mode button
     document.querySelectorAll('.mode-bar button[onclick^="setMode"]').forEach(b=>{
       const m=b.getAttribute('onclick').match(/'(\w+)'/);
