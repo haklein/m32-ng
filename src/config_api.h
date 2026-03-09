@@ -52,3 +52,13 @@ bool config_load_slot(const char* name);
 
 // Delete a named slot.
 bool config_delete_slot(const char* name);
+
+// Battery info snapshot for web API.
+struct BatteryInfo {
+    int     percent;         // 0–100, or -1 if unavailable
+    int     raw_mv;          // uncalibrated battery voltage
+    int     compensated_mv;  // calibrated battery voltage
+    float   comp_factor;     // compensation factor (1.0 = uncalibrated)
+    bool    charging;
+};
+BatteryInfo config_get_battery_info();

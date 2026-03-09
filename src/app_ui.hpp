@@ -128,6 +128,10 @@ static INetwork*     s_network = nullptr;  // nullptr on simulator
 // ── Battery HAL callbacks (set by platform main.cpp) ─────────────────────
 static uint8_t (*s_read_battery_percent)() = nullptr;  // 0–100, or 255 if n/a
 static bool    (*s_is_charging)()          = nullptr;
+static int     (*s_read_battery_raw_mv)()  = nullptr;  // uncalibrated mV
+static int     (*s_read_battery_comp_mv)() = nullptr;  // calibrated mV
+static float   (*s_read_battery_comp_factor)() = nullptr; // compensation factor
+static void    (*s_poll_battery_cal)()     = nullptr;  // auto-calibrate on charge complete
 static void    (*s_set_brightness)(uint8_t) = nullptr; // backlight 0–255
 
 // ── Dedicated CW task (pocketwroom only) ─────────────────────────────────
@@ -451,6 +455,17 @@ bool config_delete_slot(const char* name)
     s_storage->set_string("slots", name, "");
     s_storage->commit();
     return true;
+}
+
+BatteryInfo config_get_battery_info()
+{
+    BatteryInfo info = { -1, -1, -1, 1.0f, false };
+    if (s_read_battery_percent) info.percent = s_read_battery_percent();
+    if (s_read_battery_raw_mv)  info.raw_mv = s_read_battery_raw_mv();
+    if (s_read_battery_comp_mv) info.compensated_mv = s_read_battery_comp_mv();
+    if (s_read_battery_comp_factor) info.comp_factor = s_read_battery_comp_factor();
+    if (s_is_charging) info.charging = s_is_charging();
+    return info;
 }
 #endif // BOARD_POCKETWROOM — config API
 
@@ -3187,6 +3202,7 @@ static void app_ui_tick()
         static unsigned long s_bat_poll_t = 0;
         if ((unsigned long)(app_millis() - s_bat_poll_t) >= 10000UL) {
             s_bat_poll_t = (unsigned long)app_millis();
+            if (s_poll_battery_cal) s_poll_battery_cal();
             uint8_t pct = s_read_battery_percent ? s_read_battery_percent() : 255;
             bool chg = s_is_charging ? s_is_charging() : false;
             if (s_active_sb) s_active_sb->set_battery(pct, chg);

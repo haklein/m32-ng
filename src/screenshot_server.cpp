@@ -170,6 +170,18 @@ static void handle_api_version(AsyncWebServerRequest* req)
 #endif
 }
 
+static void handle_api_battery(AsyncWebServerRequest* req)
+{
+    char buf[160];
+    auto info = config_get_battery_info();
+    snprintf(buf, sizeof(buf),
+        "{\"percent\":%d,\"raw_mv\":%d,\"compensated_mv\":%d,"
+        "\"comp_factor\":%.4f,\"charging\":%s}",
+        info.percent, info.raw_mv, info.compensated_mv,
+        info.comp_factor, info.charging ? "true" : "false");
+    req->send(200, "application/json", buf);
+}
+
 static void handle_api_meta(AsyncWebServerRequest* req)
 {
     const FieldMeta* meta;
@@ -296,6 +308,7 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
 </head>
 <body>
 <h1>Morserino-32 NG <span id="ver" style="font-size:.5em;color:#888"></span></h1>
+<div id="bat-info" style="font-size:.8em;color:#7fdbca;margin-bottom:8px"></div>
 <div class="tabs" id="tabs"></div>
 <div id="panels"></div>
 
@@ -329,6 +342,17 @@ async function init(){
   groups=[...new Set(META.map(m=>m.group))];
   buildUI();
   loadSlots();
+  updateBattery();
+  setInterval(updateBattery, 10000);
+}
+async function updateBattery(){
+  try{
+    const r=await fetch('/api/battery');
+    const b=await r.json();
+    const el=document.getElementById('bat-info');
+    const chg=b.charging?' &#x26A1;':'';
+    el.innerHTML='Battery: '+b.percent+'%'+chg+' &middot; raw '+b.raw_mv+' mV &middot; cal '+b.compensated_mv+' mV (factor '+b.comp_factor.toFixed(4)+')';
+  }catch(e){}
 }
 
 function buildUI(){
@@ -522,6 +546,8 @@ void screenshot_server_start()
                  [](AsyncWebServerRequest* r) { handle_api_meta(r); });
     s_server->on("/api/version", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_version(r); });
+    s_server->on("/api/battery", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_battery(r); });
 
     // Slots API (specific routes first)
     s_server->on("/api/slots/save", HTTP_GET,

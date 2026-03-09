@@ -329,6 +329,10 @@ void setup()
     s_battery.begin();
     s_read_battery_percent = []() -> uint8_t { return s_battery.percent(); };
     s_is_charging          = []() -> bool    { return s_battery.charging(); };
+    s_read_battery_raw_mv  = []() -> int     { return s_battery.raw_mv(); };
+    s_read_battery_comp_mv = []() -> int     { return s_battery.compensated_mv(); };
+    s_read_battery_comp_factor = []() -> float { return s_battery.comp_factor(); };
+    s_poll_battery_cal     = []()            { s_battery.poll_calibration(); };
     s_set_brightness       = [](uint8_t level) { gfx.setBrightness(level); };
 
     // ── WiFi HAL + AP SSID ────────────────────────────────────────────────
