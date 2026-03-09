@@ -509,6 +509,7 @@ async function init(){
   setInterval(updateBattery, 10000);
   setInterval(pollStatus, 1000);
   setInterval(pollText, 500);
+  setInterval(refreshConfig, 5000);
 }
 
 async function pollStatus(){
@@ -557,6 +558,16 @@ async function togglePause(){
 function clearText(){
   cwTextBuf='';
   document.getElementById('cw-text').textContent='';
+}
+
+async function refreshConfig(){
+  try{
+    const r=await fetch('/api/config');
+    const c=await r.json();
+    let changed=false;
+    for(const k in c){if(CFG[k]!==c[k]){changed=true;break;}}
+    if(changed){CFG=c;updateUI();}
+  }catch(e){}
 }
 
 async function updateBattery(){
