@@ -62,3 +62,35 @@ struct BatteryInfo {
     bool    charging;
 };
 BatteryInfo config_get_battery_info();
+
+// ── Mode control & status for web API ──────────────────────────────────────
+
+// Current device status snapshot.
+struct StatusInfo {
+    const char* mode;        // "none","keyer","generator","echo","chatbot",
+                             // "internet_cw","invaders","decoder"
+    bool  paused;            // true if generator/echo is paused
+    int   wpm;               // current WPM setting
+    int   decoder_signal;    // 0–100, decoder mode signal level
+    int   decoder_wpm;       // estimated WPM in decoder mode
+};
+StatusInfo config_get_status();
+
+// Request mode switch (deferred to main loop).
+// mode: "keyer","generator","echo","chatbot","decoder","home"
+// Returns true if the request was queued.
+bool config_request_mode(const char* mode);
+
+// Toggle pause/resume in generator or echo mode.
+// Returns true if toggled.
+bool config_toggle_pause();
+
+// Get accumulated decoded/generated text since last call.
+// Caller must free() the returned string.  Returns nullptr if empty.
+char* config_get_text();
+
+// Get accumulated text without clearing.  Caller must free().
+char* config_peek_text();
+
+// Clear accumulated text buffer.
+void config_clear_text();

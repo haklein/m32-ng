@@ -1,6 +1,6 @@
 #ifdef BOARD_POCKETWROOM
 
-#include "screenshot_server.h"
+#include "web_server.h"
 #include "config_api.h"
 #include <ESPAsyncWebServer.h>
 #include <lvgl.h>
@@ -75,7 +75,7 @@ static void screenshot_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8
     }
 }
 
-void screenshot_server_update()
+void web_server_update()
 {
 }
 
@@ -268,6 +268,142 @@ static void handle_api_slot_delete(AsyncWebServerRequest* req)
     req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
 }
 
+// ── Mode control & status API handlers ───────────────────────────────────────
+
+static void handle_api_status(AsyncWebServerRequest* req)
+{
+    StatusInfo s = config_get_status();
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+        "{\"mode\":\"%s\",\"paused\":%s,\"wpm\":%d,"
+        "\"decoder_signal\":%d,\"decoder_wpm\":%d}",
+        s.mode, s.paused ? "true" : "false", s.wpm,
+        s.decoder_signal, s.decoder_wpm);
+    req->send(200, "application/json", buf);
+}
+
+static void handle_api_mode(AsyncWebServerRequest* req)
+{
+    if (!req->hasParam("m")) {
+        req->send(400, "application/json", "{\"error\":\"missing 'm' param\"}");
+        return;
+    }
+    String mode = req->getParam("m")->value();
+    bool ok = config_request_mode(mode.c_str());
+    req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
+static void handle_api_pause(AsyncWebServerRequest* req)
+{
+    bool ok = config_toggle_pause();
+    req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
+static void handle_api_text(AsyncWebServerRequest* req)
+{
+    char* text = config_get_text();
+    if (!text) {
+        req->send(200, "application/json", "{\"text\":\"\"}");
+        return;
+    }
+    // JSON-escape the text (simple: just escape quotes and backslashes)
+    String json = "{\"text\":\"";
+    for (const char* p = text; *p; p++) {
+        if (*p == '"') json += "\\\"";
+        else if (*p == '\\') json += "\\\\";
+        else if (*p == '\n') json += "\\n";
+        else json += *p;
+    }
+    json += "\"}";
+    free(text);
+    req->send(200, "application/json", json);
+}
+
+// ── Plain HTML page (no JS — for lynx, screen readers, curl) ─────────────────
+
+static void handle_plain(AsyncWebServerRequest* req)
+{
+    // Process action if present
+    if (req->hasParam("action")) {
+        String action = req->getParam("action")->value();
+        if (action == "pause") config_toggle_pause();
+        else if (action == "clear") config_clear_text();
+        else config_request_mode(action.c_str());
+    }
+
+    StatusInfo s = config_get_status();
+    char* text = config_peek_text();
+    bool is_gen = (strcmp(s.mode, "generator") == 0 || strcmp(s.mode, "echo") == 0);
+
+    String html;
+    html.reserve(2048);
+    html += "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+            "<title>M32-NG</title></head><body>\n"
+            "<h1>Morserino-32 NG</h1>\n";
+
+    // Status
+    html += "<p>Mode: <strong>";
+    html += s.mode;
+    html += "</strong> | ";
+    html += String(s.wpm);
+    html += " WPM";
+    if (is_gen && s.paused) html += " | <strong>PAUSED</strong>";
+    if (strcmp(s.mode, "decoder") == 0 && s.decoder_wpm > 0) {
+        html += " | Signal: ";
+        html += String(s.decoder_signal);
+        html += "% | Decode: ";
+        html += String(s.decoder_wpm);
+        html += " WPM";
+    }
+    html += "</p>\n";
+
+    // Mode links
+    html += "<h2>Modes</h2>\n<ul>\n";
+    const char* modes[] = {"home","keyer","generator","echo","decoder","chatbot"};
+    const char* labels[] = {"Home","Keyer","Generator","Echo","Decoder","Chatbot"};
+    for (int i = 0; i < 6; i++) {
+        html += "<li>";
+        if (strcmp(s.mode, modes[i]) == 0 ||
+            (strcmp(modes[i], "home") == 0 && strcmp(s.mode, "none") == 0))
+            html += String("[") + labels[i] + "]";
+        else {
+            html += "<a href=\"/plain?action=";
+            html += modes[i];
+            html += "\">";
+            html += labels[i];
+            html += "</a>";
+        }
+        html += "</li>\n";
+    }
+    html += "</ul>\n";
+
+    // Pause/resume
+    if (is_gen) {
+        html += "<p><a href=\"/plain?action=pause\">[";
+        html += s.paused ? "RESUME" : "PAUSE";
+        html += "]</a></p>\n";
+    }
+
+    // Text output
+    html += "<h2>CW Text</h2>\n<pre>\n";
+    if (text) {
+        // HTML-escape the text
+        for (const char* p = text; *p; p++) {
+            if (*p == '<') html += "&lt;";
+            else if (*p == '>') html += "&gt;";
+            else if (*p == '&') html += "&amp;";
+            else html += *p;
+        }
+        free(text);
+    }
+    html += "\n</pre>\n";
+    html += "<p><a href=\"/plain?action=clear\">[Clear text]</a>"
+            " | <a href=\"/plain\">[Refresh]</a></p>\n";
+
+    html += "</body></html>";
+    req->send(200, "text/html", html);
+}
+
 // ── Embedded Single-Page App ─────────────────────────────────────────────────
 
 static const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
@@ -304,11 +440,33 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
 .screenshot img{max-width:100%;border:2px solid #333;border-radius:4px}
 .status{color:#7fdbca;font-size:.85em;margin:4px 0}
 #slot-name{background:#16213e;color:#e0e0e0;border:1px solid #555;border-radius:3px;padding:4px 8px;width:120px}
+.mode-bar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.mode-bar button{font-size:.8em;padding:6px 12px}
+.mode-bar button.active-mode{background:#00d4d4;outline:2px solid #fff}
+#status-line{font-size:.9em;margin:6px 0;color:#7fdbca}
+#cw-text{background:#0a0a1a;border:1px solid #333;border-radius:4px;padding:10px;min-height:80px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:.95em;white-space:pre-wrap;word-break:break-all;margin:8px 0}
 </style>
 </head>
 <body>
 <h1>Morserino-32 NG <span id="ver" style="font-size:.5em;color:#888"></span></h1>
 <div id="bat-info" style="font-size:.8em;color:#7fdbca;margin-bottom:8px"></div>
+
+<h2>Mode Control</h2>
+<div id="status-line" role="status" aria-live="polite">Loading...</div>
+<nav class="mode-bar" aria-label="Mode selection">
+  <button onclick="setMode('home')" aria-label="Home menu">Home</button>
+  <button onclick="setMode('keyer')" aria-label="CW Keyer mode">Keyer</button>
+  <button onclick="setMode('generator')" aria-label="CW Generator mode">Generator</button>
+  <button onclick="setMode('echo')" aria-label="Echo Trainer mode">Echo</button>
+  <button onclick="setMode('decoder')" aria-label="CW Decoder mode">Decoder</button>
+  <button onclick="setMode('chatbot')" aria-label="QSO Chatbot mode">Chatbot</button>
+  <button onclick="togglePause()" id="pause-btn" class="secondary" aria-label="Pause or resume">Pause</button>
+</nav>
+
+<h2>CW Text</h2>
+<div id="cw-text" role="log" aria-live="polite" aria-label="Decoded and generated CW text"></div>
+<button onclick="clearText()" class="secondary" style="margin:4px 0">Clear</button>
+
 <div class="tabs" id="tabs"></div>
 <div id="panels"></div>
 
@@ -321,19 +479,21 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
 </div>
 
 <div class="screenshot" id="ss-area" style="display:none">
-  <img id="ss-img" alt="screenshot">
+  <img id="ss-img" alt="Device screenshot">
 </div>
 
 <h2>Settings Slots</h2>
 <div class="status" id="slot-status"></div>
 <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
-  <input id="slot-name" placeholder="Slot name" maxlength="16">
+  <input id="slot-name" placeholder="Slot name" maxlength="16" aria-label="Slot name">
   <button onclick="saveSlot()">Save</button>
 </div>
 <div class="slots" id="slot-list"></div>
 
 <script>
 let META=[], CFG={}, groups=[];
+let cwTextBuf='';
+let curStatus={mode:'none',paused:false,wpm:0};
 
 async function init(){
   const [metaR, cfgR, verR]=await Promise.all([fetch('/api/meta'),fetch('/api/config'),fetch('/api/version')]);
@@ -343,8 +503,61 @@ async function init(){
   buildUI();
   loadSlots();
   updateBattery();
+  pollStatus();
+  pollText();
   setInterval(updateBattery, 10000);
+  setInterval(pollStatus, 1000);
+  setInterval(pollText, 500);
 }
+
+async function pollStatus(){
+  try{
+    const r=await fetch('/api/status');
+    const s=await r.json();
+    curStatus=s;
+    let line='Mode: '+s.mode+' | '+s.wpm+' WPM';
+    if(s.paused) line+=' | PAUSED';
+    if(s.mode==='decoder'&&s.decoder_wpm>0)
+      line+=' | Signal: '+s.decoder_signal+'% | Decode: '+s.decoder_wpm+' WPM';
+    document.getElementById('status-line').textContent=line;
+    // Update pause button
+    const pb=document.getElementById('pause-btn');
+    pb.textContent=s.paused?'Resume':'Pause';
+    pb.style.display=(s.mode==='generator'||s.mode==='echo')?'':'none';
+    // Highlight active mode button
+    document.querySelectorAll('.mode-bar button[onclick^="setMode"]').forEach(b=>{
+      const m=b.getAttribute('onclick').match(/'(\w+)'/);
+      if(m) b.classList.toggle('active-mode',m[1]===s.mode);
+    });
+  }catch(e){}
+}
+
+async function pollText(){
+  try{
+    const r=await fetch('/api/text');
+    const d=await r.json();
+    if(d.text){
+      cwTextBuf+=d.text;
+      const el=document.getElementById('cw-text');
+      el.textContent=cwTextBuf;
+      el.scrollTop=el.scrollHeight;
+    }
+  }catch(e){}
+}
+
+async function setMode(m){
+  await fetch('/api/mode?m='+m);
+}
+
+async function togglePause(){
+  await fetch('/api/pause');
+}
+
+function clearText(){
+  cwTextBuf='';
+  document.getElementById('cw-text').textContent='';
+}
+
 async function updateBattery(){
   try{
     const r=await fetch('/api/battery');
@@ -362,22 +575,27 @@ function buildUI(){
     const t=document.createElement('div');
     t.className='tab'+(i===0?' active':'');
     t.textContent=g;
+    t.setAttribute('role','tab');
+    t.setAttribute('tabindex','0');
     t.onclick=()=>{
       document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
       t.classList.add('active');
       document.getElementById('p-'+i).classList.add('active');
     };
+    t.onkeydown=(e)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();t.click();}};
     tabs.appendChild(t);
 
     const p=document.createElement('div');
     p.className='panel'+(i===0?' active':'');
     p.id='p-'+i;
+    p.setAttribute('role','tabpanel');
     META.filter(m=>m.group===g).forEach(m=>{
       const d=document.createElement('div');
       d.className='field';
       const l=document.createElement('label');
       l.textContent=m.label;
+      l.id='lbl-'+m.key;
       d.appendChild(l);
 
       let ctrl;
@@ -410,6 +628,7 @@ function buildUI(){
         ctrl.onchange=()=>post({[m.key]:parseInt(ctrl.value)});
       }
       ctrl.dataset.key=m.key;
+      ctrl.setAttribute('aria-labelledby','lbl-'+m.key);
       d.appendChild(ctrl);
       p.appendChild(d);
     });
@@ -471,12 +690,14 @@ async function loadSlots(){
     row.innerHTML='<span>'+name+'</span>';
     const lb=document.createElement('button');
     lb.textContent='Load';lb.className='secondary';
+    lb.setAttribute('aria-label','Load slot '+name);
     lb.onclick=async()=>{
       const r=await fetch('/api/slots/load?name='+encodeURIComponent(name));
       if(r.ok){CFG=await r.json();updateUI();setSlotStatus('Loaded: '+name);}
     };
     const db=document.createElement('button');
     db.textContent='Delete';db.className='danger';
+    db.setAttribute('aria-label','Delete slot '+name);
     db.onclick=async()=>{
       await fetch('/api/slots/delete?name='+encodeURIComponent(name));
       loadSlots();setSlotStatus('Deleted: '+name);
@@ -508,7 +729,7 @@ init();
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-void screenshot_server_start()
+void web_server_start()
 {
     if (s_server) return;
 
@@ -549,6 +770,16 @@ void screenshot_server_start()
     s_server->on("/api/battery", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_battery(r); });
 
+    // Mode control & status API
+    s_server->on("/api/status", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_status(r); });
+    s_server->on("/api/mode", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_mode(r); });
+    s_server->on("/api/pause", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_pause(r); });
+    s_server->on("/api/text", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_text(r); });
+
     // Slots API (specific routes first)
     s_server->on("/api/slots/save", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_slot_save(r); });
@@ -559,6 +790,10 @@ void screenshot_server_start()
     s_server->on("/api/slots", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_slots_list(r); });
 
+    // Plain HTML page (no JS — lynx, curl, screen readers)
+    s_server->on("/plain", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_plain(r); });
+
     // SPA index page
     s_server->on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
         r->send_P(200, "text/html", INDEX_HTML);
@@ -568,7 +803,7 @@ void screenshot_server_start()
     Log.noticeln("Web server started on port 80");
 }
 
-void screenshot_server_stop()
+void web_server_stop()
 {
     if (s_server) {
         s_server->end();

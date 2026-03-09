@@ -29,7 +29,7 @@
 #include <esp_sleep.h>      // deep sleep + GPIO wakeup
 #include <WiFi.h>           // MAC address for AP SSID
 #include <SPIFFS.h>         // sound effects filesystem
-#include "screenshot_server.h"
+#include "web_server.h"
 #endif
 
 // ── Common display helpers ─────────────────────────────────────────────────
@@ -360,7 +360,7 @@ void setup()
             lv_timer_handler();
             bool ok = s_network->wifi_connect(wifi_ssid, wifi_pass, 8000);
             Log.noticeln("WiFi: %s", ok ? "connected" : "failed");
-            if (ok) screenshot_server_start();
+            if (ok) web_server_start();
         }
     }
 

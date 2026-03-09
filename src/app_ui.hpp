@@ -28,6 +28,7 @@
 #include "cw_textfield.hpp"
 #include "screen_stack.hpp"
 #include "status_bar.hpp"
+#include "config_api.h"
 #include "cw_chatbot.h"
 #include "lv_font_intel.h"
 #include "timing_buffer.h"
@@ -187,6 +188,10 @@ static volatile bool  s_decoder_active  = false;
 static volatile uint8_t s_decoder_signal_level = 0;  // 0–100
 static volatile int   s_decoder_est_wpm = 0;
 #endif
+
+// ── Web API state ────────────────────────────────────────────────────────
+static std::string s_text_accum;               // accumulated text for /api/text
+static volatile int s_pending_mode_idx = -2;   // deferred mode switch (-2 = none)
 
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
@@ -478,6 +483,7 @@ BatteryInfo config_get_battery_info()
     if (s_is_charging) info.charging = s_is_charging();
     return info;
 }
+
 #endif // BOARD_POCKETWROOM — config API
 
 // ── CW engine (keyer + echo modes) ────────────────────────────────────────
@@ -494,6 +500,88 @@ static TextGenerators* s_gen        = nullptr;
 static std::mt19937    s_rng;
 static bool            s_gen_paused = false;
 static int             s_session_count = 0;   // phrases generated in current session
+
+// ── Config API bridge (web mode control / status) ────────────────────────
+
+static const char* mode_name(ActiveMode m)
+{
+    switch (m) {
+        case ActiveMode::KEYER:       return "keyer";
+        case ActiveMode::GENERATOR:   return "generator";
+        case ActiveMode::ECHO:        return "echo";
+        case ActiveMode::CHATBOT:     return "chatbot";
+        case ActiveMode::INTERNET_CW: return "internet_cw";
+        case ActiveMode::INVADERS:    return "invaders";
+        case ActiveMode::DECODER:     return "decoder";
+        default:                      return "none";
+    }
+}
+
+StatusInfo config_get_status()
+{
+    StatusInfo s = {};
+    s.mode = mode_name(s_active_mode);
+    s.paused = (s_active_mode == ActiveMode::GENERATOR ||
+                s_active_mode == ActiveMode::ECHO) && s_gen_paused;
+    s.wpm = s_settings.wpm;
+#ifdef BOARD_POCKETWROOM
+    s.decoder_signal = s_decoder_signal_level;
+    s.decoder_wpm    = s_decoder_est_wpm;
+#endif
+    return s;
+}
+
+bool config_request_mode(const char* mode)
+{
+    int idx = -2;
+    if      (strcmp(mode, "keyer") == 0)       idx = 0;
+    else if (strcmp(mode, "generator") == 0)   idx = 1;
+    else if (strcmp(mode, "echo") == 0)        idx = 2;
+    else if (strcmp(mode, "chatbot") == 0)     idx = 3;
+    else if (strcmp(mode, "decoder") == 0)     idx = 9;
+    else if (strcmp(mode, "home") == 0)        idx = -1;
+    else return false;
+    s_pending_mode_idx = idx;
+    return true;
+}
+
+bool config_toggle_pause()
+{
+    if (s_active_mode != ActiveMode::GENERATOR &&
+        s_active_mode != ActiveMode::ECHO) return false;
+    s_gen_paused = !s_gen_paused;
+    if (s_gen_paused) {
+        s_trainer->set_idle();
+    } else {
+        s_session_count = 0;
+        s_trainer->set_playing();
+    }
+    return true;
+}
+
+char* config_get_text()
+{
+    if (s_text_accum.empty()) return nullptr;
+    char* buf = (char*)malloc(s_text_accum.size() + 1);
+    if (buf) {
+        memcpy(buf, s_text_accum.c_str(), s_text_accum.size() + 1);
+        s_text_accum.clear();
+    }
+    return buf;
+}
+
+char* config_peek_text()
+{
+    if (s_text_accum.empty()) return nullptr;
+    char* buf = (char*)malloc(s_text_accum.size() + 1);
+    if (buf) memcpy(buf, s_text_accum.c_str(), s_text_accum.size() + 1);
+    return buf;
+}
+
+void config_clear_text()
+{
+    s_text_accum.clear();
+}
 
 // ── Word-space timer for CW keyer ─────────────────────────────────────────
 // Tracks last element END (not character decode) so the 7-dit gap is measured
@@ -532,7 +620,7 @@ static char          s_pending_pass[65]      = {};
 #ifdef BOARD_POCKETWROOM
 #include "wifi_portal.h"
 #include "qr_canvas.h"
-#include "screenshot_server.h"
+#include "web_server.h"
 static WifiPortal*   s_portal               = nullptr;
 #endif
 
@@ -887,6 +975,13 @@ static void on_letter_decoded(const std::string& letter)
     } else if (s_active_mode == ActiveMode::DECODER) {
         if (s_dec_tf) s_dec_tf->add_string(letter);
     }
+
+    // Accumulate text for web API (all modes that produce decoded text).
+    // Echo mode is handled by result/reveal callbacks, not per-letter.
+    if (s_active_mode != ActiveMode::NONE &&
+        s_active_mode != ActiveMode::INVADERS &&
+        s_active_mode != ActiveMode::ECHO)
+        s_text_accum += letter;
 
     // Update effective WPM from straight keyer's adaptive timing
     if (s_straight_keyer && !s_settings.ext_key_iambic && s_active_sb) {
@@ -2034,7 +2129,7 @@ static lv_obj_t* build_wifi_screen()
         lv_group_add_obj(s_wifi_group, disc_btn);
         lv_obj_add_event_cb(disc_btn, [](lv_event_t*) {
             if (s_network) {
-                screenshot_server_stop();
+                web_server_stop();
                 s_network->wifi_disconnect();
             }
             wifi_start_portal_mode();
@@ -2838,8 +2933,12 @@ static void app_ui_init(uint32_t rng_seed)
             if (s_settings.session_size > 0) s_session_count++;
             // Generator: deferred — show the just-finished word, queue the new one
             if (s_gen_tf) {
-                if (!s_pending_gen_phrase.empty())
+                if (!s_pending_gen_phrase.empty()) {
                     s_gen_tf->add_string(s_pending_gen_phrase + " ");
+                    // In echo mode, text_accum is handled by result/reveal callbacks
+                    if (s_active_mode != ActiveMode::ECHO)
+                        s_text_accum += s_pending_gen_phrase + " ";
+                }
                 s_pending_gen_phrase = phrase;
             }
             // Echo: reset for new round; hide target until user echoes it back
@@ -2870,6 +2969,11 @@ static void app_ui_init(uint32_t rng_seed)
                 success ? lv_palette_main(LV_PALETTE_GREEN)
                         : lv_palette_main(LV_PALETTE_RED), 0);
         }
+        // Accumulate for web API: "phrase OK" or "ERR" (no reveal on failure)
+        if (success)
+            s_text_accum += phrase + " OK\n";
+        else
+            s_text_accum += "ERR\n";
     });
     s_trainer->set_echo_reveal_fn([](const std::string& phrase) {
         s_audio->play_effect(SoundEffect::ERROR);
@@ -2883,6 +2987,8 @@ static void app_ui_init(uint32_t rng_seed)
             lv_obj_set_style_text_color(s_echo_result_lbl,
                 lv_palette_main(LV_PALETTE_ORANGE), 0);
         }
+        // Accumulate for web API — reveal the word on max-repeat failure
+        s_text_accum += phrase + " MISS\n";
     });
 
     s_enc_indev = lv_indev_create();
@@ -3379,7 +3485,7 @@ static void app_ui_tick()
             if (s_wifi_status_lbl)
                 lv_label_set_text_fmt(s_wifi_status_lbl, "Connected: %s", ip);
             if (s_active_sb) s_active_sb->set_wifi(true);
-            screenshot_server_start();
+            web_server_start();
         } else {
             if (s_wifi_status_lbl)
                 lv_label_set_text(s_wifi_status_lbl, "Failed \xe2\x80\x94 press Back");
@@ -3461,6 +3567,7 @@ static void app_ui_tick()
             }
             if (s_active_mode == ActiveMode::INTERNET_CW && s_inet_tx_tf)
                 s_inet_tx_tf->add_string(" ");
+            s_text_accum += " ";
             s_keyer_word_pending = false;
         }
     }
@@ -3525,9 +3632,29 @@ static void app_ui_tick()
 #endif
     }
 
+    // ── Deferred mode switch from web API ────────────────────────────────
+    {
+        int idx = s_pending_mode_idx;
+        if (idx != -2) {                       // -2 = no pending request
+            s_pending_mode_idx = -2;           // consume
+            if (idx == -1) {
+                // "home" — pop back to main menu
+                while (s_stack.size() > 1)
+                    s_stack.pop();
+                lv_indev_set_group(s_enc_indev, s_menu_group);
+            } else {
+                // Pop to home first, then push requested mode
+                while (s_stack.size() > 1)
+                    s_stack.pop();
+                lv_indev_set_group(s_enc_indev, s_menu_group);
+                push_mode_screen(idx);
+            }
+        }
+    }
+
     lv_timer_handler();
 
 #ifdef BOARD_POCKETWROOM
-    screenshot_server_update();
+    web_server_update();
 #endif
 }
