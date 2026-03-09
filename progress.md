@@ -146,6 +146,15 @@ Tracks features implemented vs. specified in the FSD and Implementation FSD.
 - [x] Difficulty scaling (spawn interval, scroll speed)
 - [x] Pause/resume via encoder short press
 
+## CW Decoder
+- [x] Decoder mode: decode CW from radio headphone output via TLV320AIC3100 ADC
+- [x] Goertzel tone detection with adaptive threshold (narrowband, tuned to sidetone frequency)
+- [x] Hardware AGC on codec (auto-adjusts for varying headphone output levels)
+- [x] Adaptive WPM estimation (exponential moving average of dit/dash durations)
+- [x] Signal amplitude bar + estimated WPM display
+- [x] Decoded text in scrolling CWTextField
+- [x] Dedicated FreeRTOS task for audio processing (Core 1, priority 5)
+
 ## Documentation
 - [x] Keyer architecture documentation (`keyer.md`)
 - [x] User manual (`manual.md`)

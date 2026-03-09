@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 
 // Sound effects for training feedback (echo trainer OK/ERR).
 enum class SoundEffect : uint8_t { SUCCESS, ERROR };
@@ -44,4 +45,15 @@ public:
     // Native: plays tone sequence via ALSA.
     // Default is a no-op for platforms without audio effects.
     virtual void play_effect(SoundEffect /*effect*/) {}
+
+    // ── Audio input (ADC) for CW decoder ────────────────────────────────────
+    // Enable codec ADC path with MIC PGA, AGC, and input routing.
+    virtual void enable_adc() {}
+
+    // Disable codec ADC path and power down input stages.
+    virtual void disable_adc() {}
+
+    // Read I2S RX samples (interleaved stereo, 16-bit signed).
+    // Returns number of samples actually read (may be less than max_samples).
+    virtual size_t read_audio(int16_t* buf, size_t max_samples) { (void)buf; return 0; }
 };

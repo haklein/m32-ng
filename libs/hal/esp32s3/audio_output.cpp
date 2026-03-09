@@ -221,4 +221,68 @@ void PocketAudioOutput::suspend()
     codec_.powerDown();
 }
 
+// ── ADC input for CW decoder ─────────────────────────────────────────────────
+
+void PocketAudioOutput::enable_adc()
+{
+    // ADC clocking: share PLL with DAC.
+    // ADC_FS = PLL_CLK / (NADC × MADC × AOSR) = 98304000 / (4 × 4 × 128) = 48000 Hz
+    codec_.setNADCVal(4);   codec_.setNADCPower(true);
+    codec_.setMADCVal(4);   codec_.setMADCPower(true);
+    codec_.setAOSRVal(128);
+
+    // Input routing: MIC1LP → P-terminal via 10 kΩ (single-ended from HP jack).
+    // Page 1, Reg 48: bits 7:6 = 01 → MIC1LP routed to P-terminal @ 10 kΩ
+    codec_.writeRegister(AIC31XX_MICPGAPI, 0x40);
+    // Page 1, Reg 49: bits 7:6 = 01 → CM routed to M-terminal @ 10 kΩ
+    codec_.writeRegister(AIC31XX_MICPGAMI, 0x40);
+
+    // MIC PGA: enable with moderate gain for headphone-level input.
+    codec_.setMicPGAEnable(true);
+    codec_.setMicPGAGain(20.0f);  // 20 dB — suitable for line/HP output
+
+    // Hardware AGC (Page 0, Registers 86-93).
+    // Reg 86: AGC enable (bit7), target -10 dB (010, bits 6:4),
+    //         gain hysteresis ±1 dB (10, bits 3:2), noise hysteresis disabled (00)
+    codec_.writeRegister(AIC31XX_REG(0, 86), 0xA8);
+    // Reg 87: noise threshold -30 dB (default), hysteresis disabled
+    codec_.writeRegister(AIC31XX_REG(0, 87), 0x00);
+    // Reg 88: max gain 40 dB (0x50 = 80 half-dB steps)
+    codec_.writeRegister(AIC31XX_REG(0, 88), 0x50);
+    // Reg 89-90: attack/decay time — moderate values
+    codec_.writeRegister(AIC31XX_REG(0, 89), 0x00);  // fastest attack
+    codec_.writeRegister(AIC31XX_REG(0, 90), 0x00);  // fastest decay
+
+    // Enable ADC digital path and unmute
+    codec_.enableADC();
+    codec_.setADCGain(0.0f);
+
+    Serial.println("AIC31XX: ADC enabled (AGC on, MIC PGA 20 dB)");
+}
+
+void PocketAudioOutput::disable_adc()
+{
+    // Disable AGC
+    codec_.writeRegister(AIC31XX_REG(0, 86), 0x00);
+    // Mute and power down ADC
+    codec_.modifyRegister(AIC31XX_ADCFGA, AIC31XX_ADC_MUTE_MASK, 0x1);
+    codec_.modifyRegister(AIC31XX_ADCSETUP, AIC31XX_ADC_POWER_MASK, 0x0);
+    // Disable MIC PGA
+    codec_.setMicPGAEnable(false);
+    // Clear input routing
+    codec_.writeRegister(AIC31XX_MICPGAPI, 0x00);
+    codec_.writeRegister(AIC31XX_MICPGAMI, 0x00);
+    // Power down ADC clock dividers
+    codec_.setNADCPower(false);
+    codec_.setMADCPower(false);
+
+    Serial.println("AIC31XX: ADC disabled");
+}
+
+size_t PocketAudioOutput::read_audio(int16_t* buf, size_t max_samples)
+{
+    return sidetone_.readBytes((uint8_t*)buf, max_samples * sizeof(int16_t))
+           / sizeof(int16_t);
+}
+
 #endif // BOARD_POCKETWROOM

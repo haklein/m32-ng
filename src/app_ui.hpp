@@ -116,7 +116,7 @@ static lv_coord_t content_y()
 }
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
-enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT, INTERNET_CW, INVADERS };
+enum class ActiveMode { NONE, KEYER, GENERATOR, ECHO, CHATBOT, INTERNET_CW, INVADERS, DECODER };
 static ActiveMode s_active_mode = ActiveMode::NONE;
 
 // ── HAL pointers (assigned by platform before app_ui_init) ────────────────
@@ -176,6 +176,17 @@ static lv_obj_t*   s_inv_level_lbl = nullptr;
 static lv_obj_t*   s_inv_input_lbl = nullptr;
 static lv_obj_t*   s_inv_wpm_lbl  = nullptr;
 static lv_obj_t*   s_inv_gameover_lbl = nullptr;
+
+// ── CW Decoder mode ──────────────────────────────────────────────────────
+static CWTextField*   s_dec_tf          = nullptr;  // decoded text
+static lv_obj_t*      s_dec_bar         = nullptr;  // signal level bar
+static lv_obj_t*      s_dec_wpm_lbl     = nullptr;  // estimated WPM label
+#ifdef BOARD_POCKETWROOM
+static TaskHandle_t   s_decoder_task_handle = nullptr;
+static volatile bool  s_decoder_active  = false;
+static volatile uint8_t s_decoder_signal_level = 0;  // 0–100
+static volatile int   s_decoder_est_wpm = 0;
+#endif
 
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
@@ -723,6 +734,10 @@ static lv_obj_t* build_wifi_screen();
 static lv_obj_t* build_inet_cw_screen();
 static lv_obj_t* build_invaders_screen();
 static void      update_invaders_hud();
+static lv_obj_t* build_decoder_screen();
+#ifdef BOARD_POCKETWROOM
+static void      decoder_audio_task(void* arg);
+#endif
 static void      inet_cw_disconnect();
 static void      apply_settings();
 static std::string content_phrase();
@@ -869,6 +884,8 @@ static void on_letter_decoded(const std::string& letter)
             lv_obj_remove_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
         }
         (void)hit;
+    } else if (s_active_mode == ActiveMode::DECODER) {
+        if (s_dec_tf) s_dec_tf->add_string(letter);
     }
 
     // Update effective WPM from straight keyer's adaptive timing
@@ -1149,8 +1166,8 @@ static void push_mode_screen(int idx)
                 delete s_active_sb; s_active_sb = nullptr;
             }
         };
-    } else {
-        // idx == 8: CW Invaders
+    } else if (idx == 8) {
+        // CW Invaders
         ns = build_invaders_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::INVADERS;
@@ -1176,6 +1193,37 @@ static void push_mode_screen(int idx)
 #endif
             s_active_mode = ActiveMode::NONE;
             s_audio->tone_off();
+            delete s_active_sb; s_active_sb = nullptr;
+        };
+    } else {
+        // idx == 9: CW Decoder
+        ns = build_decoder_screen();
+        enter_cb = []() {
+            s_active_mode = ActiveMode::DECODER;
+#ifdef BOARD_POCKETWROOM
+            s_audio->enable_adc();
+            s_decoder_active = true;
+            s_decoder_signal_level = 0;
+            s_decoder_est_wpm = 0;
+            xTaskCreatePinnedToCore(decoder_audio_task, "decoder",
+                                    8192, nullptr, 5, &s_decoder_task_handle, 1);
+#endif
+            lv_indev_set_group(s_enc_indev, nullptr);
+        };
+        leave_cb = []() {
+#ifdef BOARD_POCKETWROOM
+            s_decoder_active = false;
+            if (s_decoder_task_handle) {
+                // Wait for task to finish (it checks s_decoder_active)
+                vTaskDelay(pdMS_TO_TICKS(50));
+                s_decoder_task_handle = nullptr;
+            }
+            s_audio->disable_adc();
+#endif
+            s_active_mode = ActiveMode::NONE;
+            delete s_dec_tf;  s_dec_tf  = nullptr;
+            s_dec_bar     = nullptr;
+            s_dec_wpm_lbl = nullptr;
             delete s_active_sb; s_active_sb = nullptr;
         };
     }
@@ -1230,8 +1278,9 @@ static lv_obj_t* build_main_menu()
         { LV_SYMBOL_WIFI,     "WiFi Setup"    },
         { LV_SYMBOL_WIFI,     "Internet CW"   },
         { LV_SYMBOL_SHUFFLE,  "CW Invaders"   },
+        { LV_SYMBOL_EYE_OPEN, "CW Decoder"    },
     };
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 10; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_obj_set_style_text_font(btn, menu_font(), 0);
         lv_group_add_obj(s_menu_group, btn);
@@ -2987,6 +3036,147 @@ static lv_obj_t* build_invaders_screen()
     return scr;
 }
 
+// ── CW Decoder screen ────────────────────────────────────────────────────
+
+static lv_obj_t* build_decoder_screen()
+{
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    StatusBar* sb = new StatusBar(scr, menu_font());
+    sb->set_mode(LV_SYMBOL_EYE_OPEN);
+    sb->set_wpm(s_settings.wpm, s_settings.farnsworth);
+    s_active_sb = sb;
+
+    lv_coord_t y = content_y() + 2;
+
+    // Signal level bar
+    s_dec_bar = lv_bar_create(scr);
+    lv_bar_set_range(s_dec_bar, 0, 100);
+    lv_bar_set_value(s_dec_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_size(s_dec_bar, SCREEN_W - 80, 10);
+    lv_obj_set_pos(s_dec_bar, 4, y);
+    lv_obj_set_style_bg_color(s_dec_bar, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_dec_bar, lv_color_hex(0x00CC00), LV_PART_INDICATOR);
+
+    // WPM estimate label (right of bar)
+    s_dec_wpm_lbl = lv_label_create(scr);
+    lv_label_set_text(s_dec_wpm_lbl, "-- WPM");
+    lv_obj_set_style_text_font(s_dec_wpm_lbl, ui_font(), 0);
+    lv_obj_set_pos(s_dec_wpm_lbl, SCREEN_W - 72, y - 2);
+
+    y += 14;
+
+    // Decoded text area
+    s_dec_tf = new CWTextField(scr, cw_text_font());
+    lv_obj_set_pos(s_dec_tf->obj(), 4, y);
+    lv_obj_set_size(s_dec_tf->obj(), SCREEN_W - 8, SCREEN_H - y - 4);
+
+    return scr;
+}
+
+#ifdef BOARD_POCKETWROOM
+// ── Decoder audio task (FreeRTOS, Core 1) ──────────────────────────────────
+// Reads I2S RX samples, runs Goertzel tone detection, bridges carrier
+// on/off durations to MorseDecoder dot/dash events.
+
+#include "goertzel_detector.h"
+
+static void decoder_audio_task(void* /*arg*/)
+{
+    // Goertzel block size for narrow bandwidth at 48 kHz
+    // Matches GoertzelDetector::setup() calculation: 608 * (48000/106000) ≈ 275
+    const int BLOCK_SIZE = (int)(608.0f * (48000.0f / 106000.0f) + 0.5f);
+
+    cw::GoertzelDetector goertzel;
+    goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
+
+    // Separate MorseDecoder for decoded audio (not shared with keyer decoder).
+    // Callback queues symbols to UI via existing s_decoded_symbol_queue.
+    MorseDecoder dec(
+        180, // initial decode threshold (3 × 60ms dit)
+        [](const std::string& letter) {
+            DecodedSymbol sym;
+            strncpy(sym.text, letter.c_str(), sizeof(sym.text) - 1);
+            sym.text[sizeof(sym.text) - 1] = '\0';
+            xQueueSend(s_decoded_symbol_queue, &sym, 0);
+        },
+        app_millis
+    );
+
+    // Stereo buffer (I2S is stereo 16-bit) + mono extraction buffer
+    int16_t stereo_buf[BLOCK_SIZE * 2];
+    int16_t mono_buf[BLOCK_SIZE];
+
+    float avg_dit_ms = 60.0f;  // initial estimate (~20 WPM)
+    bool carrier_on = false;
+    unsigned long carrier_start = 0;
+    int consec_on = 0, consec_off = 0;
+    const int DEBOUNCE = 2;  // require 2 consecutive matching blocks
+
+    while (s_decoder_active) {
+        // Read one Goertzel block of stereo samples
+        size_t got = s_audio->read_audio(stereo_buf, BLOCK_SIZE * 2);
+        if (got < (size_t)(BLOCK_SIZE * 2)) {
+            vTaskDelay(1);
+            continue;
+        }
+
+        // Extract left channel and measure peak for signal level display
+        int32_t peak = 0;
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            mono_buf[i] = stereo_buf[i * 2];
+            int32_t a = mono_buf[i] < 0 ? -mono_buf[i] : mono_buf[i];
+            if (a > peak) peak = a;
+        }
+        s_decoder_signal_level = (uint8_t)std::min(100, (int)(peak * 100 / 32768));
+
+        // Run Goertzel tone detection
+        bool tone = goertzel.process_block(mono_buf, BLOCK_SIZE);
+
+        // Debounce state transitions
+        if (tone) { consec_on++; consec_off = 0; }
+        else      { consec_off++; consec_on = 0; }
+
+        bool new_carrier = carrier_on;
+        if (!carrier_on && consec_on >= DEBOUNCE)  new_carrier = true;
+        if (carrier_on  && consec_off >= DEBOUNCE) new_carrier = false;
+
+        unsigned long now = (unsigned long)app_millis();
+
+        if (new_carrier && !carrier_on) {
+            // Carrier just turned ON
+            carrier_on = true;
+            carrier_start = now;
+            dec.set_transmitting(true);
+        } else if (!new_carrier && carrier_on) {
+            // Carrier just turned OFF — classify element
+            carrier_on = false;
+            dec.set_transmitting(false);
+            unsigned long dur = now - carrier_start;
+            if (dur >= 10) {  // ignore sub-10ms glitches
+                float threshold = avg_dit_ms * 2.0f;
+                if (dur < (unsigned long)threshold) {
+                    dec.append_dot();
+                    avg_dit_ms = avg_dit_ms * 0.7f + dur * 0.3f;
+                } else {
+                    dec.append_dash();
+                    avg_dit_ms = avg_dit_ms * 0.7f + (dur / 3.0f) * 0.3f;
+                }
+                // Clamp to sane range (5–60 WPM → 240–20 ms dit)
+                avg_dit_ms = std::max(20.0f, std::min(240.0f, avg_dit_ms));
+                dec.set_decode_threshold((unsigned long)(avg_dit_ms * 3.0f));
+                s_decoder_est_wpm = (int)(1200.0f / avg_dit_ms);
+            }
+        }
+
+        dec.tick();
+    }
+
+    vTaskDelete(nullptr);
+}
+#endif // BOARD_POCKETWROOM
+
 // ── Internet CW network pump ──────────────────────────────────────────────
 // Called from app_ui_tick() when INTERNET_CW mode is active.
 // Drains TX timing ring buffer → codec → network send.
@@ -3317,6 +3507,22 @@ static void app_ui_tick()
             lv_label_set_text(s_inv_gameover_lbl, go);
             lv_obj_remove_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+
+    // CW Decoder: update signal level bar and WPM estimate
+    if (s_active_mode == ActiveMode::DECODER) {
+#ifdef BOARD_POCKETWROOM
+        if (s_dec_bar)
+            lv_bar_set_value(s_dec_bar, s_decoder_signal_level, LV_ANIM_OFF);
+        if (s_dec_wpm_lbl) {
+            int wpm = s_decoder_est_wpm;
+            if (wpm > 0) {
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%d WPM", wpm);
+                lv_label_set_text(s_dec_wpm_lbl, buf);
+            }
+        }
+#endif
     }
 
     lv_timer_handler();

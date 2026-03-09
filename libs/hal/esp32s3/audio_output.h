@@ -37,6 +37,10 @@ public:
     void poll() override;
     void play_effect(SoundEffect effect) override;
 
+    void enable_adc() override;
+    void disable_adc() override;
+    size_t read_audio(int16_t* buf, size_t max_samples) override;
+
 private:
     I2S_Sidetone   sidetone_;
     TLV320AIC31xx  codec_;

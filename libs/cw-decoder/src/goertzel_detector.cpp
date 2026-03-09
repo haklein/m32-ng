@@ -5,6 +5,8 @@
 // Algorithmic content preserved exactly; analogRead() replaced with an
 // explicit sample buffer so this file has no platform dependency.
 
+namespace cw {
+
 void GoertzelDetector::setup(float target_freq_hz,
                              float sample_rate_hz,
                              bool  narrow_bandwidth)
@@ -54,3 +56,5 @@ bool GoertzelDetector::process_block(const int16_t* samples, size_t count)
 
     return magnitude > magnitude_limit_ * 0.6f;
 }
+
+} // namespace cw

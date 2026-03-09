@@ -9,11 +9,13 @@
 #include <cstdint>
 #include <cstddef>
 
+namespace cw {
+
 // Detects a fixed-frequency tone in a block of PCM samples using the
 // Goertzel algorithm with an adaptive magnitude threshold.
 //
 // Usage:
-//   GoertzelDetector det;
+//   cw::GoertzelDetector det;
 //   det.setup(target_hz, sample_rate_hz, bandwidth_narrow);
 //   // In audio callback / task:
 //   bool tone_present = det.process_block(samples, count);
@@ -44,3 +46,5 @@ private:
     float magnitude_limit_ = 0.0f;
     float magnitude_limit_low_ = 0.0f;
 };
+
+} // namespace cw
