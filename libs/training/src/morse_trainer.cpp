@@ -72,6 +72,7 @@ void MorseTrainer::set_release_compensation(int ms)      { release_comp_ms_ = ms
 void MorseTrainer::set_idle()
 {
     current_player_state_ = PlayerState::Idle;
+    current_echo_state_   = EchoState::Playing;  // cancel pending Error/Reveal/Success
     sidetone_cb_(false);
 }
 
