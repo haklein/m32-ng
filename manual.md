@@ -231,6 +231,45 @@ as source material. Multiple content types can be enabled simultaneously.
 | CW Academy | T A N O I S 1 4 R H D L 2 5 U C ... |
 | LICW | K M R S U A P T L O W I ... |
 
+### Koch Lesson Filtering
+
+When **Koch Lesson** is set to a value greater than 0, it acts as a *filter* on the
+selected content types — it does not replace them. The trainer still generates words,
+abbreviations, callsigns, characters, or QSO phrases according to your content type
+selections, but only those that can be spelled using the first N characters of your
+chosen Koch order.
+
+**How it works with each content type:**
+
+- **Words / Abbreviations**: The trainer picks a random word or abbreviation, checks
+  whether every letter is within the Koch character set, and retries (up to 50 attempts)
+  if it contains characters not yet learned.
+- **Characters**: The Koch character set is intersected with your **Character Set**
+  selection (Alpha, Alpha+Num, or All CW). For example, if your Koch lesson includes
+  digits but Character Set is "Alpha", you will only get letters from the Koch set.
+  Conversely, if Character Set is "Alpha+Num" but your Koch lesson hasn't reached any
+  digits yet, you will only get letters.
+- **Callsigns / QSO**: Filtered the same way as Words — callsigns and QSO phrases are
+  checked against the Koch character set and retried if they contain unknown characters.
+
+**Fallback behavior:** If no matching phrase is found after 50 attempts (e.g. the Koch
+lesson is very short and few words can be spelled), the trainer falls back to generating
+a random character group drawn from the Koch character set.
+
+**When do digits appear?** Digits become available only once they appear in your Koch
+order. The first digit arrives at different lesson numbers depending on the order:
+
+| Order | First Digit | Lesson # |
+|-------|-------------|----------|
+| LCWO | 5 | 24 |
+| Morserino | 0 | 18 |
+| CW Academy | 1 | 8 |
+| LICW | 5 | 22 |
+
+If you select "Alpha+Num" as Character Set but your Koch lesson hasn't reached any
+digits yet, character groups will contain only letters from the Koch set — this is
+expected behavior, not a bug.
+
 ---
 
 ## Settings
