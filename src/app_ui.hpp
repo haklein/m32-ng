@@ -194,6 +194,8 @@ static std::string s_text_accum;               // accumulated text for /api/text
 static volatile int s_pending_mode_idx = -2;   // deferred mode switch (-2 = none)
 static volatile bool s_pending_apply   = false; // deferred apply_settings from web task
 static volatile int  s_pending_pause   = 0;    // 1=pause, 2=resume, 0=none
+static std::string   s_send_text_queue;        // queued text for /api/send (word-by-word)
+static volatile bool s_pending_send   = false; // deferred send-text trigger
 
 // ── NVS persistence ───────────────────────────────────────────────────────
 static void save_settings()
@@ -580,6 +582,15 @@ char* config_peek_text()
 void config_clear_text()
 {
     s_text_accum.clear();
+}
+
+bool config_send_text(const char* text)
+{
+    if (s_active_mode != ActiveMode::KEYER &&
+        s_active_mode != ActiveMode::GENERATOR) return false;
+    s_send_text_queue = text;
+    s_pending_send = true;
+    return true;
 }
 
 // ── Word-space timer for CW keyer ─────────────────────────────────────────
@@ -2948,6 +2959,34 @@ static void app_ui_init(uint32_t rng_seed)
             }
         },
         []() -> std::string {
+            // Send-text queue (from /api/send): return next word, or empty when done.
+            if (!s_send_text_queue.empty()) {
+                // Extract the next whitespace-delimited word
+                size_t start = s_send_text_queue.find_first_not_of(' ');
+                if (start == std::string::npos) {
+                    s_send_text_queue.clear();
+                    return std::string();
+                }
+                size_t end = s_send_text_queue.find(' ', start);
+                std::string word;
+                if (end == std::string::npos) {
+                    word = s_send_text_queue.substr(start);
+                    s_send_text_queue.clear();
+                } else {
+                    word = s_send_text_queue.substr(start, end - start);
+                    s_send_text_queue.erase(0, end + 1);
+                }
+                // Show on keyer display + accumulate for web
+                if (s_keyer_tf) s_keyer_tf->add_string(word + " ");
+                if (s_gen_tf)   s_gen_tf->add_string(word + " ");
+                s_text_accum += word + " ";
+                return word;
+            }
+
+            // Keyer mode: no content generation — only /api/send text.
+            if (s_active_mode == ActiveMode::KEYER)
+                return std::string();
+
             // Chatbot: return pending phrase, or empty to go Idle.
             // Signal tx-done here (before trainer goes Idle) to avoid
             // the 3-second ADVANCE_PHRASE_DELAY latency.
@@ -3615,7 +3654,9 @@ static void app_ui_tick()
         }
     }
     if (s_active_mode == ActiveMode::GENERATOR ||
-        s_active_mode == ActiveMode::ECHO) {
+        s_active_mode == ActiveMode::ECHO ||
+        (s_active_mode == ActiveMode::KEYER &&
+         s_trainer->player_state() != MorseTrainer::PlayerState::Idle)) {
         s_trainer->tick();
     }
     // Chatbot: tick trainer (for CW playback) + chatbot state machine
@@ -3714,6 +3755,21 @@ static void app_ui_tick()
                 s_session_count = 0;
                 s_trainer->set_playing();
             }
+        }
+    }
+
+    // ── Deferred send-text from web API ─────────────────────────────────
+    if (s_pending_send) {
+        s_pending_send = false;
+        if ((s_active_mode == ActiveMode::KEYER ||
+             s_active_mode == ActiveMode::GENERATOR) &&
+            !s_send_text_queue.empty())
+        {
+            // In generator mode, pause normal generation while sending
+            if (s_active_mode == ActiveMode::GENERATOR)
+                s_gen_paused = true;
+            s_trainer->set_state(MorseTrainer::TrainerState::Player);
+            s_trainer->set_playing();
         }
     }
 

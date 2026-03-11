@@ -22,18 +22,19 @@ should poll `/api/status` or `/api/config` to confirm changes took effect.
 2. [Mode Control](#2-mode-control)
 3. [Pause / Resume](#3-pause--resume)
 4. [CW Text Stream](#4-cw-text-stream)
-5. [Settings — Read](#5-settings--read)
-6. [Settings — Write](#6-settings--write)
-7. [Settings — Field Metadata](#7-settings--field-metadata)
-8. [Settings Slots](#8-settings-slots)
-9. [Firmware Version](#9-firmware-version)
-10. [Battery Info](#10-battery-info)
-11. [Screenshot](#11-screenshot)
-12. [Plain HTML Page](#12-plain-html-page)
-13. [Settings Key Reference](#13-settings-key-reference)
-14. [Mode Names Reference](#14-mode-names-reference)
-15. [Polling Recommendations](#15-polling-recommendations)
-16. [Example Client Session](#16-example-client-session)
+5. [Send Text as Morse](#5-send-text-as-morse)
+6. [Settings — Read](#6-settings--read)
+7. [Settings — Write](#7-settings--write)
+8. [Settings — Field Metadata](#8-settings--field-metadata)
+9. [Settings Slots](#9-settings-slots)
+10. [Firmware Version](#10-firmware-version)
+11. [Battery Info](#11-battery-info)
+12. [Screenshot](#12-screenshot)
+13. [Plain HTML Page](#13-plain-html-page)
+14. [Settings Key Reference](#14-settings-key-reference)
+15. [Mode Names Reference](#15-mode-names-reference)
+16. [Polling Recommendations](#16-polling-recommendations)
+17. [Example Client Session](#17-example-client-session)
 
 ---
 
@@ -206,7 +207,58 @@ endpoint (see [Plain HTML Page](#12-plain-html-page)).
 
 ---
 
-## 5. Settings — Read
+## 5. Send Text as Morse
+
+Queue arbitrary text to be played as Morse code through the device speaker
+(and keyer output). Works in **Keyer** and **Generator** modes.
+
+```
+POST /api/send
+Content-Type: application/json
+```
+
+**Request body:**
+
+```json
+{"text": "cq cq de w1ab k"}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `text` | string | Yes | Plain text to play as Morse. Split into words internally and played one word at a time with standard inter-word spacing. |
+
+**Response** `200 application/json`
+
+```json
+{"ok": true}
+```
+
+`ok` is `true` if the current mode supports sending (Keyer or Generator),
+`false` otherwise (wrong mode, e.g. Echo or Decoder).
+
+**Behavior:**
+- Text is split on whitespace and fed to the MorseTrainer word by word.
+- Each word is played at the current WPM/Farnsworth settings.
+- The played text appears on the device display and in the `/api/text` stream.
+- In **Generator mode**, normal phrase generation pauses while the queued text
+  plays. After the queue empties, the trainer goes idle (paused).
+- In **Keyer mode**, the trainer plays the text and returns to idle when done.
+  Manual keying is unaffected before and after.
+- Sending new text while a previous send is still playing appends to the queue
+  (the previous text continues playing, new text follows).
+- The request is deferred to the main loop for thread safety.
+
+**Example — curl:**
+
+```bash
+curl -X POST http://morserino.local/api/send \
+  -H "Content-Type: application/json" \
+  -d '{"text":"cq cq cq de w1ab w1ab k"}'
+```
+
+---
+
+## 6. Settings — Read
 
 Get all current settings as a flat JSON object.
 
@@ -262,7 +314,7 @@ See [Settings Key Reference](#13-settings-key-reference) for the complete list.
 
 ---
 
-## 6. Settings — Write
+## 7. Settings — Write
 
 Update one or more settings. Only the keys present in the JSON body are
 modified; all others remain unchanged.
@@ -318,7 +370,7 @@ curl -X POST http://192.168.4.1/api/config \
 
 ---
 
-## 7. Settings — Field Metadata
+## 8. Settings — Field Metadata
 
 Get the metadata table describing all settings fields, their types, ranges,
 and UI grouping. This enables a client to dynamically build a settings editor
@@ -391,7 +443,7 @@ An array of field descriptor objects:
 
 ---
 
-## 8. Settings Slots
+## 9. Settings Slots
 
 Named snapshots of the full settings state. Up to 8 slots. Stored in NVS.
 
@@ -479,7 +531,7 @@ GET /api/slots/delete?name=<slot_name>
 
 ---
 
-## 9. Firmware Version
+## 10. Firmware Version
 
 ```
 GET /api/version
@@ -496,7 +548,7 @@ has no git info, returns `"unknown"`.
 
 ---
 
-## 10. Battery Info
+## 11. Battery Info
 
 ```
 GET /api/battery
@@ -524,7 +576,7 @@ GET /api/battery
 
 ---
 
-## 11. Screenshot
+## 12. Screenshot
 
 Capture the current display framebuffer as a BMP image.
 
@@ -551,7 +603,7 @@ Screenshot buffer not allocated
 
 ---
 
-## 12. Plain HTML Page
+## 13. Plain HTML Page
 
 A server-rendered HTML page that works without JavaScript. Designed for
 text-based browsers (lynx, w3m), screen readers, and `curl`.
@@ -605,7 +657,7 @@ All mode switches and pause/resume are rendered as regular HTML links
 
 ---
 
-## 13. Settings Key Reference
+## 14. Settings Key Reference
 
 Complete list of all settings keys, their types, ranges, defaults, and semantics.
 
@@ -678,25 +730,25 @@ character group from the Koch set is generated as fallback.
 
 ---
 
-## 14. Mode Names Reference
+## 15. Mode Names Reference
 
 Mode strings used in `/api/status` responses and `/api/mode` requests:
 
-| Mode string | Description | Supports pause | Produces text | API-switchable |
-|-------------|-------------|:--------------:|:-------------:|:--------------:|
-| `none` | No mode active (main menu) | No | No | — |
-| `keyer` | CW paddle keyer | No | Yes (keyed chars) | Yes |
-| `generator` | CW generator (plays text as Morse) | Yes | Yes (generated phrases) | Yes |
-| `echo` | Echo trainer (play-listen-compare) | Yes | Yes (results) | Yes |
-| `chatbot` | AI QSO chatbot | Yes | Yes (QSO text) | Yes |
-| `decoder` | CW audio decoder | No | Yes (decoded chars) | Yes |
-| `internet_cw` | Internet CW (CWCom/MOPP) | No | Yes | No |
-| `invaders` | CW Invaders game | No | No | No |
-| `home` | (request only) Return to main menu | — | — | Yes |
+| Mode string | Description | Pause | Send text | Produces text | API-switchable |
+|-------------|-------------|:-----:|:---------:|:-------------:|:--------------:|
+| `none` | No mode active (main menu) | No | No | No | — |
+| `keyer` | CW paddle keyer | No | Yes | Yes (keyed chars) | Yes |
+| `generator` | CW generator (plays text as Morse) | Yes | Yes | Yes (generated phrases) | Yes |
+| `echo` | Echo trainer (play-listen-compare) | Yes | No | Yes (results) | Yes |
+| `chatbot` | AI QSO chatbot | Yes | No | Yes (QSO text) | Yes |
+| `decoder` | CW audio decoder | No | No | Yes (decoded chars) | Yes |
+| `internet_cw` | Internet CW (CWCom/MOPP) | No | No | Yes | No |
+| `invaders` | CW Invaders game | No | No | No | No |
+| `home` | (request only) Return to main menu | — | — | — | Yes |
 
 ---
 
-## 15. Polling Recommendations
+## 16. Polling Recommendations
 
 The device does not support WebSockets or server-sent events. Clients must
 poll. Recommended intervals:
@@ -715,7 +767,7 @@ fragmented text.
 
 ---
 
-## 16. Example Client Session
+## 17. Example Client Session
 
 ### Startup — discover device capabilities
 

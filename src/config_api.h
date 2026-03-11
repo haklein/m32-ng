@@ -94,3 +94,8 @@ char* config_peek_text();
 
 // Clear accumulated text buffer.
 void config_clear_text();
+
+// Queue text to be played as Morse.  Works in Keyer and Generator modes.
+// The text is split into words and fed to the MorseTrainer one word at a time.
+// Returns true if the request was queued (mode supports sending).
+bool config_send_text(const char* text);

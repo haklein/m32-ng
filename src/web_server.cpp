@@ -320,6 +320,24 @@ static void handle_api_text(AsyncWebServerRequest* req)
     req->send(200, "application/json", json);
 }
 
+static void handle_api_send(AsyncWebServerRequest* req)
+{
+    if (s_post_body.length() == 0) {
+        req->send(400, "application/json", "{\"error\":\"empty body\"}");
+        return;
+    }
+    // Parse JSON body: {"text":"..."}
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, s_post_body);
+    s_post_body = "";
+    if (err || !doc["text"].is<const char*>()) {
+        req->send(400, "application/json", "{\"error\":\"missing 'text' field\"}");
+        return;
+    }
+    bool ok = config_send_text(doc["text"].as<const char*>());
+    req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
 // ── Plain HTML page (no JS — for lynx, screen readers, curl) ─────────────────
 
 static void handle_plain(AsyncWebServerRequest* req)
@@ -465,6 +483,14 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
   <button onclick="togglePause()" id="pause-btn" class="secondary" aria-label="Pause or resume">Pause</button>
 </nav>
 
+<div id="send-area" style="display:none;margin:8px 0">
+<h2>Send Text</h2>
+<div style="display:flex;gap:6px;align-items:center">
+  <input id="send-input" type="text" placeholder="Type text to send as CW..." style="flex:1;background:#16213e;color:#e0e0e0;border:1px solid #555;border-radius:3px;padding:6px 10px;font-size:.9em" aria-label="Text to send as Morse" onkeydown="if(event.key==='Enter')sendText()">
+  <button onclick="sendText()" aria-label="Send text as Morse">Send</button>
+</div>
+</div>
+
 <h2>CW Text</h2>
 <div id="cw-text" role="log" aria-live="polite" aria-label="Decoded and generated CW text"></div>
 <button onclick="clearText()" class="secondary" style="margin:4px 0">Clear</button>
@@ -532,6 +558,9 @@ async function pollStatus(){
       const m=b.getAttribute('onclick').match(/'(\w+)'/);
       if(m) b.classList.toggle('active-mode',m[1]===s.mode);
     });
+    // Show send-text area in keyer/generator mode
+    document.getElementById('send-area').style.display=
+      (s.mode==='keyer'||s.mode==='generator')?'block':'none';
   }catch(e){}
 }
 
@@ -559,6 +588,14 @@ async function togglePause(){
 function clearText(){
   cwTextBuf='';
   document.getElementById('cw-text').textContent='';
+}
+
+async function sendText(){
+  const inp=document.getElementById('send-input');
+  const text=inp.value.trim();
+  if(!text)return;
+  await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+  inp.value='';
 }
 
 async function refreshConfig(){
@@ -792,6 +829,9 @@ void web_server_start()
                  [](AsyncWebServerRequest* r) { handle_api_pause(r); });
     s_server->on("/api/text", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_text(r); });
+    s_server->on("/api/send", HTTP_POST,
+                 [](AsyncWebServerRequest* r) { handle_api_send(r); },
+                 nullptr, handle_body);
 
     // Slots API (specific routes first)
     s_server->on("/api/slots/save", HTTP_GET,
