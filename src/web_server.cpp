@@ -8,6 +8,7 @@
 #include <ArduinoLog.h>
 #include <ArduinoJson.h>
 #include <cstring>
+#include <mdns.h>
 #include <esp_heap_caps.h>
 
 // ── Screen geometry (logical, after rotation) ────────────────────────────────
@@ -812,11 +813,20 @@ void web_server_start()
     });
 
     s_server->begin();
-    Log.noticeln("Web server started on port 80");
+
+    // mDNS: advertise as http://morserino.local/
+    mdns_init();
+    mdns_hostname_set("morserino");
+    mdns_instance_name_set("Morserino-32 NG");
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+
+    Log.noticeln("Web server started on port 80 (http://morserino.local/)");
 }
 
 void web_server_stop()
 {
+    mdns_free();
+
     if (s_server) {
         s_server->end();
         delete s_server;
