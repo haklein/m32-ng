@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <algorithm>
 #include <cstring>
+#include <ArduinoLog.h>
 
 bool Esp32Network::wifi_connect(const char* ssid, const char* password,
                                 uint32_t timeout_ms)
@@ -12,17 +13,22 @@ bool Esp32Network::wifi_connect(const char* ssid, const char* password,
         WiFi.softAPdisconnect(true);
         ap_active_ = false;
     }
+    WiFi.disconnect(true);
+    delay(100);
     WiFi.mode(WIFI_STA);
+    Log.noticeln("wifi_connect: ssid='%s' pass_len=%d", ssid, strlen(password));
     WiFi.begin(ssid, password);
 
     const uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - start >= timeout_ms) {
+            Log.warningln("wifi_connect: timeout (status=%d)", WiFi.status());
             WiFi.disconnect(true);
             return false;
         }
         delay(250);
     }
+    Log.noticeln("wifi_connect: connected, IP=%s", WiFi.localIP().toString().c_str());
     return true;
 }
 

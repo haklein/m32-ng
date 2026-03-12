@@ -99,3 +99,7 @@ void config_clear_text();
 // The text is split into words and fed to the MorseTrainer one word at a time.
 // Returns true if the request was queued (mode supports sending).
 bool config_send_text(const char* text);
+
+// Connect to WiFi with the given credentials, save on success, start web server.
+// Blocks for up to ~10 s.  Returns true if connected.
+bool config_set_wifi(const char* ssid, const char* pass);

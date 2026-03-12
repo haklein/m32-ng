@@ -45,7 +45,7 @@
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 15;
+    static constexpr uint8_t VERSION = 16;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -91,6 +91,8 @@ struct AppSettings {
     uint8_t  session_size   = 0;    // 0=unlimited, 1-99 phrases per session
     // VERSION 15 — display brightness
     uint8_t  brightness     = 255;  // backlight 0–255 (persisted)
+    // VERSION 16 — WiFi auto-connect
+    bool     wifi_autostart = true; // connect WiFi at boot (disable to save power)
 };
 static AppSettings s_settings;
 
@@ -212,6 +214,7 @@ static void load_settings()
     if (n >= sizeof(tmp.version) && tmp.version <= AppSettings::VERSION) {
         s_settings = tmp;  // old fields copied; new fields keep defaults
         if (s_settings.brightness == 0) s_settings.brightness = 255;  // never fully black
+        if (tmp.version < 16) s_settings.wifi_autostart = true;  // new in V16
         if (s_settings.version < AppSettings::VERSION) {
             s_settings.version = AppSettings::VERSION;
             save_settings();   // persist migrated settings
@@ -266,6 +269,7 @@ static const FieldMeta s_field_meta[] = {
     {"inet_proto",       "Internet CW",      FieldType::ENUM,  0,   1, 0, "CWCom|MOPP",                          "Network"},
     {"cwcom_wire",       "CWCom Wire",       FieldType::INT,   1, 999, 1, nullptr,                               "Network"},
     {"callsign",         "Callsign",         FieldType::STRING, 0,  15, 0, nullptr,                               "Network"},
+    {"wifi_autostart",   "WiFi Auto-connect",FieldType::BOOL,  0,   1, 0, nullptr,                               "Network"},
 };
 static constexpr int s_field_meta_count = sizeof(s_field_meta) / sizeof(s_field_meta[0]);
 
@@ -314,6 +318,7 @@ static void settings_field_to_json(JsonObject obj, const char* key)
     else if (!strcmp(key, "session_size"))      obj[key] = s.session_size;
     else if (!strcmp(key, "brightness"))        obj[key] = s.brightness;
     else if (!strcmp(key, "last_mode"))         obj[key] = s.last_mode;
+    else if (!strcmp(key, "wifi_autostart"))   obj[key] = (int)s.wifi_autostart;
 }
 
 char* config_settings_to_json()
@@ -369,6 +374,7 @@ static bool settings_field_from_json(const char* key, JsonVariant val)
     }
     else if (!strcmp(key, "session_size"))      { s.session_size = val.as<int>(); return true; }
     else if (!strcmp(key, "brightness"))        { s.brightness = val.as<int>(); return true; }
+    else if (!strcmp(key, "wifi_autostart"))   { s.wifi_autostart = val.as<int>() != 0; return true; }
     return false;
 }
 
@@ -657,6 +663,40 @@ static bool load_wifi_creds(char* ssid_buf, size_t ssid_len,
         return false;
     s_storage->get_string("wifi", "pass", pass_buf, pass_len);
     return ssid_buf[0] != '\0';
+}
+
+bool config_set_wifi(const char* ssid, const char* pass)
+{
+    if (!ssid || ssid[0] == '\0' || !s_network) return false;
+    bool ok = s_network->wifi_connect(ssid, pass ? pass : "", 10000);
+    if (ok) {
+        save_wifi_creds(ssid, pass ? pass : "");
+        if (s_active_sb) s_active_sb->set_wifi(true);
+        web_server_start();
+    }
+    return ok;
+}
+
+// Try to connect WiFi using saved credentials (for on-demand use when
+// wifi_autostart is disabled).  Returns true if already connected or
+// successfully connected now.
+static bool ensure_wifi_connected()
+{
+#ifdef BOARD_POCKETWROOM
+    if (!s_network) return false;
+    if (s_network->wifi_is_connected()) return true;
+    char ssid[33] = {}, pass[65] = {};
+    if (!load_wifi_creds(ssid, sizeof(ssid), pass, sizeof(pass)))
+        return false;
+    bool ok = s_network->wifi_connect(ssid, pass, 8000);
+    if (ok) {
+        if (s_active_sb) s_active_sb->set_wifi(true);
+        web_server_start();
+    }
+    return ok;
+#else
+    return false;
+#endif
 }
 
 // ── Screen stack & LVGL encoder indev ─────────────────────────────────────
@@ -1255,6 +1295,8 @@ static void push_mode_screen(int idx)
         enter_cb = []() {
             lv_indev_set_group(s_enc_indev, s_wifi_group);
 #ifdef BOARD_POCKETWROOM
+            // Try saved creds first (needed when wifi_autostart is off)
+            ensure_wifi_connected();
             // Only start captive portal if not already connected.
             if (!s_network || !s_network->wifi_is_connected()) {
                 if (s_wifi_status_lbl)
@@ -2252,9 +2294,13 @@ static void wifi_start_portal_mode()
     s_stack.push(ns,
         []() {
             lv_indev_set_group(s_enc_indev, s_wifi_group);
-            if (s_wifi_status_lbl)
-                lv_label_set_text(s_wifi_status_lbl, "Starting...");
-            s_wifi_portal_pending = true;
+            // Try saved creds first (needed when wifi_autostart is off)
+            ensure_wifi_connected();
+            if (!s_network || !s_network->wifi_is_connected()) {
+                if (s_wifi_status_lbl)
+                    lv_label_set_text(s_wifi_status_lbl, "Starting...");
+                s_wifi_portal_pending = true;
+            }
         },
         []() {
             s_wifi_portal_pending = false;
@@ -2281,6 +2327,9 @@ static void      inet_cw_disconnect();
 static void inet_cw_connect()
 {
     if (!s_network) return;
+
+    // Ensure WiFi is up (needed when wifi_autostart is off)
+    ensure_wifi_connected();
 
     // Allocate codecs
     delete s_cwcom_codec; s_cwcom_codec = nullptr;

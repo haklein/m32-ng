@@ -30,6 +30,7 @@
 #include <WiFi.h>           // MAC address for AP SSID
 #include <SPIFFS.h>         // sound effects filesystem
 #include "web_server.h"
+#include "serial_bridge.h"
 #endif
 
 // ── Common display helpers ─────────────────────────────────────────────────
@@ -349,8 +350,11 @@ void setup()
         unsigned long ver_elapsed = millis() - splash_start;
         if (ver_elapsed < 3000) delay(3000 - ver_elapsed);
     }
-    // Try connecting with saved credentials
-    {
+    // Load settings early so we can check wifi_autostart
+    load_settings();
+
+    // Try connecting with saved credentials (unless wifi_autostart is off)
+    if (s_settings.wifi_autostart) {
         char wifi_ssid[33] = {};
         char wifi_pass[65] = {};
         if (load_wifi_creds(wifi_ssid, sizeof(wifi_ssid),
@@ -362,6 +366,8 @@ void setup()
             Log.noticeln("WiFi: %s", ok ? "connected" : "failed");
             if (ok) web_server_start();
         }
+    } else {
+        Log.noticeln("WiFi: autostart disabled");
     }
 
     // ── Ensure splash shows for at least 4 seconds ─────────────────────
@@ -370,6 +376,8 @@ void setup()
 
     // ── CW engine + UI ────────────────────────────────────────────────────
     app_ui_init(esp_random());
+
+    serial_bridge_init();
 
     Log.verboseln("Ready");
 }
@@ -384,6 +392,7 @@ void loop()
         route_ui(ev);
     }
     app_ui_tick();
+    serial_bridge_poll();
     delay(1);
 }
 

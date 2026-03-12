@@ -29,12 +29,15 @@ should poll `/api/status` or `/api/config` to confirm changes took effect.
 9. [Settings Slots](#9-settings-slots)
 10. [Firmware Version](#10-firmware-version)
 11. [Battery Info](#11-battery-info)
-12. [Screenshot](#12-screenshot)
-13. [Plain HTML Page](#13-plain-html-page)
-14. [Settings Key Reference](#14-settings-key-reference)
-15. [Mode Names Reference](#15-mode-names-reference)
-16. [Polling Recommendations](#16-polling-recommendations)
-17. [Example Client Session](#17-example-client-session)
+12. [WiFi Setup](#12-wifi-setup)
+13. [WiFi Scan](#13-wifi-scan)
+14. [Screenshot](#14-screenshot)
+15. [Plain HTML Page](#15-plain-html-page)
+16. [Settings Key Reference](#16-settings-key-reference)
+17. [Mode Names Reference](#17-mode-names-reference)
+18. [Serial Bridge Protocol](#18-serial-bridge-protocol)
+19. [Polling Recommendations](#19-polling-recommendations)
+20. [Example Client Session](#20-example-client-session)
 
 ---
 
@@ -60,7 +63,7 @@ GET /api/status
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mode` | string | Current active mode. See [Mode Names Reference](#14-mode-names-reference). |
+| `mode` | string | Current active mode. See [Mode Names Reference](#17-mode-names-reference). |
 | `paused` | bool | `true` if generator/echo/chatbot is currently paused. Always `false` for other modes. |
 | `wpm` | int | Current character speed in words-per-minute (from settings, not decoded). |
 | `decoder_signal` | int | 0–100. Audio input signal level in decoder mode. 0 when not in decoder mode. |
@@ -203,7 +206,7 @@ maintain your own buffer.
 
 There is no dedicated clear endpoint in the JSON API. To clear, call
 `GET /api/text` (which consumes and clears), or use the `/plain?action=clear`
-endpoint (see [Plain HTML Page](#12-plain-html-page)).
+endpoint (see [Plain HTML Page](#15-plain-html-page)).
 
 ---
 
@@ -310,7 +313,7 @@ All boolean settings are encoded as integers: `0` = false, `1` = true.
 All enum settings are encoded as zero-based integers.
 String settings are JSON strings.
 
-See [Settings Key Reference](#13-settings-key-reference) for the complete list.
+See [Settings Key Reference](#16-settings-key-reference) for the complete list.
 
 ---
 
@@ -447,7 +450,7 @@ An array of field descriptor objects:
 
 Named snapshots of the full settings state. Up to 8 slots. Stored in NVS.
 
-### 8.1 List Slots
+### 9.1 List Slots
 
 ```
 GET /api/slots
@@ -461,7 +464,7 @@ GET /api/slots
 
 An array of slot name strings (may be empty `[]`).
 
-### 8.2 Save Slot
+### 9.2 Save Slot
 
 Save the current settings to a named slot. Overwrites if the name already exists.
 
@@ -481,7 +484,7 @@ GET /api/slots/save?name=<slot_name>
 
 `false` if max slots reached and name is new.
 
-### 8.3 Load Slot
+### 9.3 Load Slot
 
 Load a named slot, replacing all current settings.
 
@@ -511,7 +514,7 @@ Returns the full settings object (same format as `GET /api/config`):
 {"ok": false}
 ```
 
-### 8.4 Delete Slot
+### 9.4 Delete Slot
 
 ```
 GET /api/slots/delete?name=<slot_name>
@@ -576,7 +579,94 @@ GET /api/battery
 
 ---
 
-## 12. Screenshot
+## 12. WiFi Setup
+
+Connect the device to a WiFi network. The call blocks while the device
+attempts to connect (up to ~10 seconds). On success, credentials are saved
+to NVS and the web server is started.
+
+Available via **serial bridge only** (not exposed as an HTTP endpoint — the
+device must already be on WiFi to serve HTTP).
+
+```
+POST /api/wifi
+```
+
+**Request body:**
+
+```json
+{"ssid": "MyNetwork", "pass": "secret123"}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ssid` | string | Yes | WiFi network name (2.4 GHz only — ESP32 does not support 5 GHz). |
+| `pass` | string | No | WiFi password. Omit or empty string for open networks. |
+
+**Response** `application/json`
+
+```json
+{"ok": true}
+```
+
+`ok` is `true` if the device connected successfully, `false` if the connection
+timed out (wrong password, SSID not found, out of range, 5 GHz network, etc.).
+
+**Behavior:**
+- The call is **synchronous** — it blocks for up to 10 seconds while attempting
+  to connect. The serial bridge will not respond to other commands during this time.
+- On success, credentials are saved to NVS and will be used for auto-connect
+  at next boot.
+- On success, the web server is started automatically.
+- If the device was previously connected to a different network, it disconnects
+  first.
+- If connection fails, use `GET /api/scan` to verify the network is visible.
+
+**Example — Python:**
+
+```python
+import serial, json
+ser = serial.Serial('/dev/ttyACM0', 115200, timeout=15)
+ser.write(b'POST /api/wifi {"ssid":"MyNetwork","pass":"secret"}\n')
+print(ser.readline())  # {"ok":true} or {"ok":false}
+```
+
+---
+
+## 13. WiFi Scan
+
+Scan for visible WiFi networks. Returns SSIDs and signal strength.
+
+Available via **serial bridge only**.
+
+```
+GET /api/scan
+```
+
+**Response** `application/json`
+
+```json
+[
+  {"ssid": "MyNetwork", "rssi": -45},
+  {"ssid": "Neighbor", "rssi": -78}
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ssid` | string | Network name |
+| `rssi` | int | Signal strength in dBm (closer to 0 = stronger) |
+
+**Notes:**
+- The scan takes 2–5 seconds. The serial bridge blocks during this time.
+- Results are sorted by the ESP32 WiFi stack (typically strongest first).
+- Only 2.4 GHz networks are visible (ESP32 hardware limitation).
+- Useful for debugging connection failures — verify the target SSID appears
+  in the scan results before attempting `POST /api/wifi`.
+
+---
+
+## 14. Screenshot
 
 Capture the current display framebuffer as a BMP image.
 
@@ -603,7 +693,7 @@ Screenshot buffer not allocated
 
 ---
 
-## 13. Plain HTML Page
+## 15. Plain HTML Page
 
 A server-rendered HTML page that works without JavaScript. Designed for
 text-based browsers (lynx, w3m), screen readers, and `curl`.
@@ -657,7 +747,7 @@ All mode switches and pause/resume are rendered as regular HTML links
 
 ---
 
-## 14. Settings Key Reference
+## 16. Settings Key Reference
 
 Complete list of all settings keys, their types, ranges, defaults, and semantics.
 
@@ -727,10 +817,11 @@ character group from the Koch set is generated as fallback.
 | `inet_proto` | enum | 0 | 1 | — | 0 | Internet CW protocol. `0`="CWCom", `1`="MOPP". |
 | `cwcom_wire` | int | 1 | 999 | 1 | 1 | CWCom wire/channel number. |
 | `callsign` | string | — | 15 chars | — | `""` | Operator callsign. Used in CWCom and chatbot modes. |
+| `wifi_autostart` | bool | 0 | 1 | — | 1 | If 1, connect WiFi at boot using saved credentials. If 0, WiFi only starts when the WiFi menu or Internet CW mode is entered. Default on for accessibility (blind users need the web server available immediately). |
 
 ---
 
-## 15. Mode Names Reference
+## 17. Mode Names Reference
 
 Mode strings used in `/api/status` responses and `/api/mode` requests:
 
@@ -748,7 +839,103 @@ Mode strings used in `/api/status` responses and `/api/mode` requests:
 
 ---
 
-## 16. Polling Recommendations
+## 18. Serial Bridge Protocol
+
+The device exposes the same JSON API over USB serial (CDC) at 115200 baud.
+This allows controlling the device without WiFi — useful for initial WiFi
+setup, blind/accessibility use, automation scripts, and debugging.
+
+### Transport
+
+- **Baud rate:** 115200, 8N1
+- **Port:** USB CDC (typically `/dev/ttyACM0` on Linux, `COMx` on Windows)
+- **Line protocol:** newline-terminated (`\n`). Each command is one line,
+  each response is one line.
+
+### Command format
+
+```
+METHOD /path[?query] [json-body]\n
+```
+
+- `METHOD`: `GET` or `POST`
+- Path and query string: identical to the HTTP API
+- Body (POST only): JSON on the same line after the path, separated by a space
+- Lines not starting with `GET ` or `POST ` are silently ignored (coexists
+  with ArduinoLog output)
+
+### Response format
+
+Single JSON line terminated by `\n`. Same JSON as the HTTP API.
+
+### Supported endpoints
+
+All HTTP API endpoints are available, plus serial-only endpoints:
+
+| Endpoint | Method | Serial | HTTP | Description |
+|----------|--------|:------:|:----:|-------------|
+| `/api/status` | GET | Yes | Yes | Device status |
+| `/api/mode?m=...` | GET | Yes | Yes | Mode switch |
+| `/api/pause` | GET | Yes | Yes | Toggle pause |
+| `/api/text` | GET | Yes | Yes | CW text stream |
+| `/api/send` | POST | Yes | Yes | Send text as Morse |
+| `/api/config` | GET | Yes | Yes | Read settings |
+| `/api/config` | POST | Yes | Yes | Write settings |
+| `/api/meta` | GET | Yes | Yes | Field metadata |
+| `/api/slots` | GET | Yes | Yes | List slots |
+| `/api/slots/save?name=...` | GET | Yes | Yes | Save slot |
+| `/api/slots/load?name=...` | GET | Yes | Yes | Load slot |
+| `/api/slots/delete?name=...` | GET | Yes | Yes | Delete slot |
+| `/api/version` | GET | Yes | Yes | Firmware version |
+| `/api/battery` | GET | Yes | Yes | Battery info |
+| `/api/wifi` | POST | Yes | No | WiFi setup (blocks ~10s) |
+| `/api/scan` | GET | Yes | No | WiFi network scan |
+
+### Example session
+
+```
+> GET /api/version
+< {"version":"v0.0.8"}
+
+> GET /api/scan
+< [{"ssid":"MyNetwork","rssi":-45},{"ssid":"Other","rssi":-78}]
+
+> POST /api/wifi {"ssid":"MyNetwork","pass":"secret123"}
+< {"ok":true}
+
+> GET /api/status
+< {"mode":"keyer","paused":false,"wpm":21,"decoder_signal":0,"decoder_wpm":0}
+
+> POST /api/config {"wpm":25}
+< {"ok":true}
+
+> POST /api/send {"text":"cq cq de w1ab k"}
+< {"ok":true}
+
+> GET /api/text
+< {"text":"cq cq de w1ab k "}
+```
+
+### Notes
+
+- The serial bridge runs on the same core as the main loop. Commands that
+  block (WiFi connect, WiFi scan) will prevent other serial commands and
+  UI updates during that time.
+- ArduinoLog output may appear between command and response. Clients should
+  skip lines that don't start with `{` or `[` when reading JSON responses.
+- The serial bridge is only available on the `pocketwroom` build
+  (`#ifdef BOARD_POCKETWROOM`).
+- USB CDC is enabled at boot (`ARDUINO_USB_CDC_ON_BOOT=1`). No special
+  handshake or DTR/RTS signaling is required.
+
+### Test scripts
+
+- `tools/serial_bridge_test.py` — smoke test all endpoints
+- `tools/serial_wifi_setup.py` — set WiFi credentials via serial
+
+---
+
+## 19. Polling Recommendations
 
 The device does not support WebSockets or server-sent events. Clients must
 poll. Recommended intervals:
@@ -767,7 +954,7 @@ fragmented text.
 
 ---
 
-## 17. Example Client Session
+## 20. Example Client Session
 
 ### Startup — discover device capabilities
 
@@ -894,6 +1081,8 @@ message, except for 404 on slot load which returns `{"ok":false}`.
 |----------|---------|----------|
 | `GET /api/*` | — | `application/json` |
 | `POST /api/config` | `application/json` | `application/json` |
+| `POST /api/send` | `application/json` | `application/json` |
+| `POST /api/wifi` | `application/json` | `application/json` |
 | `GET /screenshot.bmp` | — | `image/bmp` |
 | `GET /plain` | — | `text/html` |
 | `GET /` | — | `text/html` (SPA) |
