@@ -786,19 +786,21 @@ void web_server_start()
     if (!s_ss_pixels) {
         s_ss_pixels = (uint8_t*)heap_caps_malloc(PIXEL_BYTES, MALLOC_CAP_SPIRAM);
         if (!s_ss_pixels) {
-            Log.warningln("Screenshot: PSRAM malloc(%d) failed", PIXEL_BYTES);
-            return;
+            Log.warningln("Screenshot: PSRAM malloc(%d) failed — screenshots disabled", PIXEL_BYTES);
+        } else {
+            memset(s_ss_pixels, 0, PIXEL_BYTES);
+            Log.noticeln("Screenshot: allocated %d bytes in PSRAM", PIXEL_BYTES);
         }
-        memset(s_ss_pixels, 0, PIXEL_BYTES);
-        Log.noticeln("Screenshot: allocated %d bytes in PSRAM", PIXEL_BYTES);
     }
 
-    // Hook the display flush callback
-    lv_display_t* disp = lv_display_get_default();
-    if (disp && !s_orig_flush_cb) {
-        s_orig_flush_cb = disp->flush_cb;
-        lv_display_set_flush_cb(disp, screenshot_flush_cb);
-        Log.noticeln("Screenshot: flush callback hooked");
+    // Hook the display flush callback (only if screenshot buffer available)
+    if (s_ss_pixels) {
+        lv_display_t* disp = lv_display_get_default();
+        if (disp && !s_orig_flush_cb) {
+            s_orig_flush_cb = disp->flush_cb;
+            lv_display_set_flush_cb(disp, screenshot_flush_cb);
+            Log.noticeln("Screenshot: flush callback hooked");
+        }
     }
 
     s_server = new AsyncWebServer(80);
