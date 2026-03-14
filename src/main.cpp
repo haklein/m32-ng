@@ -71,6 +71,11 @@ static void M32Pocket_hal_init()
     pinMode(PIN_VEXT, OUTPUT);
     digitalWrite(PIN_VEXT, VEXT_ON_VALUE);
 #endif
+
+    // Hold Heltec LoRa SX1262 module (if soldered) in reset so it doesn't
+    // drive GPIO 35/36/37 which conflict with octal PSRAM.
+    pinMode(43, OUTPUT);
+    digitalWrite(43, LOW);
 }
 
 // Initialises hardware, LVGL, and the LVGL display driver.
