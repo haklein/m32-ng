@@ -3060,14 +3060,9 @@ static void app_ui_init(uint32_t rng_seed)
             }
             std::string phrase = content_phrase();
             if (s_settings.session_size > 0) s_session_count++;
-            // Generator: deferred — show the just-finished word, queue the new one
+            // Queue phrase for display — app_ui_tick() shows it during
+            // the AdvancePhrase gap (right after it finishes playing).
             if (s_gen_tf) {
-                if (!s_pending_gen_phrase.empty()) {
-                    s_gen_tf->add_string(s_pending_gen_phrase + " ");
-                    // In echo mode, text_accum is handled by result/reveal callbacks
-                    if (s_active_mode != ActiveMode::ECHO)
-                        s_text_accum += s_pending_gen_phrase + " ";
-                }
                 s_pending_gen_phrase = phrase;
             }
             // Echo: reset for new round; hide target until user echoes it back
@@ -3815,6 +3810,22 @@ static void app_ui_tick()
         (s_active_mode == ActiveMode::KEYER &&
          s_trainer->player_state() != MorseTrainer::PlayerState::Idle)) {
         s_trainer->tick();
+    }
+    // Show the just-finished phrase during the word gap (AdvancePhrase)
+    // or when the trainer stops (Idle).  This ensures the word appears
+    // right after it was played, before the next word's first element.
+    {
+        auto ps = s_trainer ? s_trainer->player_state()
+                            : MorseTrainer::PlayerState::Idle;
+        if ((ps == MorseTrainer::PlayerState::AdvancePhrase ||
+             ps == MorseTrainer::PlayerState::Idle) &&
+            s_gen_tf && !s_pending_gen_phrase.empty())
+        {
+            s_gen_tf->add_string(s_pending_gen_phrase + " ");
+            if (s_active_mode != ActiveMode::ECHO)
+                s_text_accum += s_pending_gen_phrase + " ";
+            s_pending_gen_phrase.clear();
+        }
     }
     // Chatbot: tick trainer (for CW playback) + chatbot state machine
     if (s_active_mode == ActiveMode::CHATBOT) {
