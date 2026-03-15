@@ -3355,6 +3355,7 @@ static void decoder_audio_task(void* /*arg*/)
     const int DEBOUNCE = 3;  // require 3 consecutive matching blocks (~17ms)
 
     int debug_count = 0;
+    int zero_blocks = 0;       // consecutive all-zero blocks (ADC watchdog)
     while (s_decoder_active) {
         // Read one Goertzel block of stereo samples
         size_t got = s_audio->read_audio(stereo_buf, BLOCK_SIZE * 2);
@@ -3376,6 +3377,24 @@ static void decoder_audio_task(void* /*arg*/)
         }
         // Scale so typical working level (~2000 peak at 0 dB PGA) shows ~50%.
         s_decoder_signal_level = (uint8_t)std::min(100, (int)(peak * 100 / 4096));
+
+        // ADC watchdog: if we get 100+ consecutive all-zero blocks (~570ms),
+        // the codec may have brown-out reset (e.g. WiFi TX power spike).
+        // Full codec reinit required — just re-enabling ADC doesn't recover.
+        if (peak == 0) {
+            if (++zero_blocks == 100) {
+                Log.warningln("decoder: ADC dead (100 zero blocks), full codec reinit");
+                s_audio->disable_adc();
+                s_audio->reinit_codec();
+                s_audio->enable_adc();
+                goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
+                zero_blocks = 0;
+                debug_count = 0;  // reset debug logging
+                continue;
+            }
+        } else {
+            zero_blocks = 0;
+        }
 
         // Run Goertzel tone detection
         bool tone = goertzel.process_block(mono_buf, BLOCK_SIZE);

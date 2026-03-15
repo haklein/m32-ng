@@ -37,6 +37,7 @@ public:
     void poll() override;
     void play_effect(SoundEffect effect) override;
 
+    void reinit_codec() override;
     void enable_adc() override;
     void disable_adc() override;
     size_t read_audio(int16_t* buf, size_t max_samples) override;

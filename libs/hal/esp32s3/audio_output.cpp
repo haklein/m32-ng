@@ -228,6 +228,54 @@ void PocketAudioOutput::suspend()
     codec_.powerDown();
 }
 
+// ── Codec re-init (WiFi brown-out recovery) ──────────────────────────────────
+
+void PocketAudioOutput::reinit_codec()
+{
+    // Diagnostic: read PLL J register — our config writes 16 (0x10),
+    // power-on default is 4 (0x04).  If 0x04, codec has been reset.
+    uint8_t pll_j = codec_.readRegister(AIC31XX_PLLJ);
+    Serial.printf("AIC31XX: reinit — PLL_J=0x%02X (%s)\n",
+                  pll_j, (pll_j == 0x10) ? "config intact" : "CODEC RESET");
+
+    // ── Hardware reset ──────────────────────────────────────────────────────
+    digitalWrite(CONFIG_TLV320AIC3100_RST, LOW);
+    delay(5);
+    digitalWrite(CONFIG_TLV320AIC3100_RST, HIGH);
+    delay(5);
+
+    // ── Software init + PLL pre-configuration ───────────────────────────────
+    codec_.begin();
+    codec_.reset();
+    codec_init_clocking();
+
+    // ── Enable PLL (BCLK already running from I2S) ─────────────────────────
+    codec_.setPLLPower(true);
+    delay(20);
+
+    codec_.setNDACVal(4);  codec_.setNDACPower(true);
+    codec_.setMDACVal(4);  codec_.setMDACPower(true);
+    codec_.setDOSRVal(128);
+
+    // ── DAC ─────────────────────────────────────────────────────────────────
+    codec_.setWordLength(16);
+    codec_.enableDAC();
+    codec_.setDACVolume(-2.0f, -2.0f);
+    codec_.setDACMute(false);
+
+    codec_enable_outputs();
+
+    // ── Headset detect (ISR already attached, just re-enable codec side) ────
+    codec_.modifyRegister(AIC31XX_TIMERDIVIDER, AIC31XX_TIMER_SELECT_MASK, 0);
+    codec_.modifyRegister(AIC31XX_TIMERDIVIDER, 0x3F, 0x10);
+    codec_.enableHeadsetDetect();
+    codec_.setHSDetectInt1(true);
+    delay(50);
+    handle_headset_event();
+
+    Serial.println("AIC31XX: full codec reinit complete");
+}
+
 // ── ADC input for CW decoder ─────────────────────────────────────────────────
 
 void PocketAudioOutput::enable_adc()

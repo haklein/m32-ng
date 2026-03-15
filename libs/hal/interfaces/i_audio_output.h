@@ -46,6 +46,11 @@ public:
     // Default is a no-op for platforms without audio effects.
     virtual void play_effect(SoundEffect /*effect*/) {}
 
+    // Full codec re-initialisation (hardware reset + PLL + DAC + outputs).
+    // Used by the decoder ADC watchdog to recover from codec brown-out resets
+    // caused by WiFi TX power spikes.  I2S is NOT restarted (already running).
+    virtual void reinit_codec() {}
+
     // ── Audio input (ADC) for CW decoder ────────────────────────────────────
     // Enable codec ADC path with MIC PGA, AGC, and input routing.
     virtual void enable_adc() {}
