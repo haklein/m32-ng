@@ -38,6 +38,9 @@ public:
     // Current adaptive magnitude limit (useful for calibration / display).
     float magnitude_limit() const { return magnitude_limit_; }
 
+    // Last computed magnitude (for debug / calibration).
+    float last_magnitude() const { return last_magnitude_; }
+
 private:
     float coeff_ = 0.0f;
     float sine_ = 0.0f;
@@ -45,6 +48,7 @@ private:
     int   goertzel_n_ = 152;
     float magnitude_limit_ = 0.0f;
     float magnitude_limit_low_ = 0.0f;
+    float last_magnitude_ = 0.0f;
 };
 
 } // namespace cw

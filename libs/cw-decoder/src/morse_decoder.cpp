@@ -112,12 +112,11 @@ void MorseDecoder::tick()
     }
 
     // Word-gap detection: if a character was decoded and silence continues,
-    // emit a word space.  Character decode fires at ~2 dit after tone-end;
-    // word gap fires decode_threshold*5 later = ~12 dit from tone-end.
-    // Standard word gap is 7 dit; using 12 gives generous margin so
-    // slightly loose inter-character spacing doesn't trigger false word gaps.
+    // emit a word space.  Character decode fires at 3 dit after last element;
+    // word gap = 7 dit total, so fire 4 dit after char decode.
+    // Using 2× decode_threshold (= 6 dit after decode = 9 dit total) for margin.
     if (space_pending_ && last_input_time == 0 &&
-        (millis_cb() - char_decode_time_) > decode_threshold * 5) {
+        (millis_cb() - char_decode_time_) > decode_threshold * 2) {
         space_pending_ = false;
         letter_decoded_cb(" ");
     }

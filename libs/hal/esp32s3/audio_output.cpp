@@ -165,6 +165,12 @@ void PocketAudioOutput::poll()
 {
     if (s_hp_interrupt) {
         s_hp_interrupt = false;
+        // Debounce: ignore events within 500ms of the last one (WiFi can
+        // cause GPIO noise on the codec INT pin, triggering spurious IRQs).
+        static unsigned long last_hp_event = 0;
+        unsigned long now = millis();
+        if (now - last_hp_event < 500) return;
+        last_hp_event = now;
         handle_headset_event();
     }
 }
@@ -174,6 +180,7 @@ void PocketAudioOutput::handle_headset_event()
     // Reading the sticky interrupt flag is required — the codec will not fire
     // further INT1 pulses until the flag register has been read.
     uint8_t flags = codec_.readRegister(AIC31XX_INTRDACFLAG);
+    if (flags == 0) return;  // spurious IRQ (WiFi GPIO noise) — nothing to do
     Serial.printf("AIC31XX: INT flags=0x%02X\n", flags);
 
     if (codec_.isHeadsetDetected()) {
@@ -231,33 +238,26 @@ void PocketAudioOutput::enable_adc()
     codec_.setMADCVal(4);   codec_.setMADCPower(true);
     codec_.setAOSRVal(128);
 
-    // Input routing: MIC1LP → P-terminal via 10 kΩ (single-ended from HP jack).
-    // Page 1, Reg 48: bits 7:6 = 01 → MIC1LP routed to P-terminal @ 10 kΩ
-    codec_.writeRegister(AIC31XX_MICPGAPI, 0x40);
-    // Page 1, Reg 49: bits 7:6 = 01 → CM routed to M-terminal @ 10 kΩ
-    codec_.writeRegister(AIC31XX_MICPGAMI, 0x40);
+    // Input routing: MIC1RP → P-terminal via 10 kΩ (single-ended from TRRS mic ring).
+    // Page 1, Reg 48: bits 5:4 = 01 → MIC1RP routed to P-terminal @ 10 kΩ
+    codec_.writeRegister(AIC31XX_MICPGAPI, 0x10);
+    // Page 1, Reg 49: leave at default (M-terminal not connected — single-ended input)
+    codec_.writeRegister(AIC31XX_MICPGAMI, 0x00);
 
-    // MIC PGA: enable with moderate gain for headphone-level input.
+    // MIC PGA: 0 dB gain — matches original Morserino v6.
+    // Noise blanking in the decoder task handles cable noise.
     codec_.setMicPGAEnable(true);
-    codec_.setMicPGAGain(20.0f);  // 20 dB — suitable for line/HP output
 
-    // Hardware AGC (Page 0, Registers 86-93).
-    // Reg 86: AGC enable (bit7), target -10 dB (010, bits 6:4),
-    //         gain hysteresis ±1 dB (10, bits 3:2), noise hysteresis disabled (00)
-    codec_.writeRegister(AIC31XX_REG(0, 86), 0xA8);
-    // Reg 87: noise threshold -30 dB (default), hysteresis disabled
-    codec_.writeRegister(AIC31XX_REG(0, 87), 0x00);
-    // Reg 88: max gain 40 dB (0x50 = 80 half-dB steps)
-    codec_.writeRegister(AIC31XX_REG(0, 88), 0x50);
-    // Reg 89-90: attack/decay time — moderate values
-    codec_.writeRegister(AIC31XX_REG(0, 89), 0x00);  // fastest attack
-    codec_.writeRegister(AIC31XX_REG(0, 90), 0x00);  // fastest decay
+    // No AGC — fixed gain preserves the signal-to-noise ratio needed for
+    // Goertzel tone detection.  AGC compresses dynamic range and amplifies
+    // the noise floor, making silence indistinguishable from tone.
 
-    // Enable ADC digital path and unmute
+    // Enable ADC digital path and unmute.
+    // -12 dB ADC gain — matches original Morserino v6.
     codec_.enableADC();
-    codec_.setADCGain(0.0f);
+    codec_.setADCGain(-12.0f);
 
-    Serial.println("AIC31XX: ADC enabled (AGC on, MIC PGA 20 dB)");
+    Serial.println("AIC31XX: ADC enabled (no AGC, MIC PGA 0 dB, ADC -12 dB)");
 }
 
 void PocketAudioOutput::disable_adc()

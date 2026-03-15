@@ -74,7 +74,7 @@ struct AppSettings {
     uint8_t  sleep_timeout_min = 5; // 0=disabled, 1-60 minutes
     // Quick start (VERSION 8)
     bool     quick_start  = false;  // auto-enter last mode on boot
-    uint8_t  last_mode    = 0;      // 0=Keyer, 1=Generator, 2=Echo, 3=Chatbot
+    uint8_t  last_mode    = 0;      // menu index: 0=Keyer..9=Decoder
     // VERSION 9
     bool     adaptive_speed = true; // adjust WPM on echo success/failure
     uint8_t  qso_max_words  = 0;   // 0=unlimited, else max words per QSO phrase
@@ -1419,11 +1419,9 @@ static void push_mode_screen(int idx)
         };
     }
 
-    // Remember last CW mode (0–3) for quick start
-    if (idx <= 3) {
-        s_settings.last_mode = (uint8_t)idx;
-        save_settings();
-    }
+    // Remember last mode for quick start
+    s_settings.last_mode = (uint8_t)idx;
+    save_settings();
 
     s_stack.push(ns, std::move(enter_cb), std::move(leave_cb));
 }
@@ -3141,8 +3139,8 @@ static void app_ui_init(uint32_t rng_seed)
     // Propagate all loaded settings (ADSR, volume, WPM, etc.) to engines.
     apply_settings();
 
-    // Quick start: auto-jump into last CW mode
-    if (s_settings.quick_start && s_settings.last_mode <= 3) {
+    // Quick start: auto-jump into last mode
+    if (s_settings.quick_start && s_settings.last_mode <= 9) {
         push_mode_screen(s_settings.last_mode);
     }
 
@@ -3322,11 +3320,16 @@ static lv_obj_t* build_decoder_screen()
 static void decoder_audio_task(void* /*arg*/)
 {
     // Goertzel block size for narrow bandwidth at 48 kHz
-    // Matches GoertzelDetector::setup() calculation: 608 * (48000/106000) ≈ 275
-    const int BLOCK_SIZE = (int)(608.0f * (48000.0f / 106000.0f) + 0.5f);
+    // Matches GoertzelDetector::setup() — narrow BW: 252 * (48000/44100) ≈ 274
+    const int BLOCK_SIZE = (int)(252.0f * (48000.0f / 44100.0f) + 0.5f);
 
     cw::GoertzelDetector goertzel;
     goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
+    // Log the actual Goertzel bin frequency (may differ from target)
+    int gk = (int)(0.5f + (BLOCK_SIZE * (float)s_settings.freq_hz) / 48000.0f);
+    int actual_hz = gk * 48000 / BLOCK_SIZE;
+    Log.noticeln("decoder: target=%d Hz, Goertzel bin k=%d → %d Hz, N=%d",
+                 s_settings.freq_hz, gk, actual_hz, BLOCK_SIZE);
 
     // Separate MorseDecoder for decoded audio (not shared with keyer decoder).
     // Callback queues symbols to UI via existing s_decoded_symbol_queue.
@@ -3349,12 +3352,17 @@ static void decoder_audio_task(void* /*arg*/)
     bool carrier_on = false;
     unsigned long carrier_start = 0;
     int consec_on = 0, consec_off = 0;
-    const int DEBOUNCE = 2;  // require 2 consecutive matching blocks
+    const int DEBOUNCE = 3;  // require 3 consecutive matching blocks (~17ms)
 
+    int debug_count = 0;
     while (s_decoder_active) {
         // Read one Goertzel block of stereo samples
         size_t got = s_audio->read_audio(stereo_buf, BLOCK_SIZE * 2);
         if (got < (size_t)(BLOCK_SIZE * 2)) {
+            if (debug_count < 5) {
+                Log.warningln("decoder: read_audio got %d/%d samples", got, BLOCK_SIZE * 2);
+                debug_count++;
+            }
             vTaskDelay(1);
             continue;
         }
@@ -3366,10 +3374,19 @@ static void decoder_audio_task(void* /*arg*/)
             int32_t a = mono_buf[i] < 0 ? -mono_buf[i] : mono_buf[i];
             if (a > peak) peak = a;
         }
-        s_decoder_signal_level = (uint8_t)std::min(100, (int)(peak * 100 / 32768));
+        // Scale so typical working level (~2000 peak at 0 dB PGA) shows ~50%.
+        s_decoder_signal_level = (uint8_t)std::min(100, (int)(peak * 100 / 4096));
 
         // Run Goertzel tone detection
         bool tone = goertzel.process_block(mono_buf, BLOCK_SIZE);
+
+        // Debug: first 30 blocks always, then every 200th, plus tone=1
+        if (debug_count < 500 && (debug_count < 30 || tone || (debug_count % 200 == 0))) {
+            Log.noticeln("decoder: blk=%d peak=%d mag=%d thr=%d tone=%d",
+                         debug_count, peak, (int)goertzel.last_magnitude(),
+                         (int)goertzel.magnitude_limit(), tone ? 1 : 0);
+        }
+        debug_count++;
 
         // Debounce state transitions
         if (tone) { consec_on++; consec_off = 0; }
@@ -3386,12 +3403,14 @@ static void decoder_audio_task(void* /*arg*/)
             carrier_on = true;
             carrier_start = now;
             dec.set_transmitting(true);
+            Log.noticeln("decoder: CARRIER ON");
         } else if (!new_carrier && carrier_on) {
             // Carrier just turned OFF — classify element
             carrier_on = false;
             dec.set_transmitting(false);
             unsigned long dur = now - carrier_start;
-            if (dur >= 10) {  // ignore sub-10ms glitches
+            Log.noticeln("decoder: CARRIER OFF dur=%d avg_dit=%d", (int)dur, (int)avg_dit_ms);
+            if (dur >= 20) {  // ignore sub-20ms glitches (noise blanker)
                 float threshold = avg_dit_ms * 2.0f;
                 if (dur < (unsigned long)threshold) {
                     dec.append_dot();
@@ -3639,6 +3658,7 @@ static void app_ui_tick()
     // ── Deep sleep on inactivity ─────────────────────────────────────────
     if (s_settings.sleep_timeout_min > 0 &&
         s_active_mode != ActiveMode::GENERATOR &&
+        s_active_mode != ActiveMode::DECODER &&
         (unsigned long)(app_millis() - s_last_activity_t) >=
             (unsigned long)s_settings.sleep_timeout_min * 60000UL) {
         if (s_enter_deep_sleep) s_enter_deep_sleep();
