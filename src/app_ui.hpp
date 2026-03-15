@@ -3325,6 +3325,11 @@ static void decoder_audio_task(void* /*arg*/)
 
     cw::GoertzelDetector goertzel;
     goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
+    // Raise noise floor: with AIC3100 codec + clipping signal, noise magnitude
+    // in the Goertzel bin reaches ~10000.  Default floor 15000 × 0.6 = 9000
+    // trigger is below the noise, causing false tone detection during silence.
+    // 30000 × 0.6 = 18000, safely above the ~10000 noise floor.
+    goertzel.set_magnitude_floor(30000.0f);
     // Log the actual Goertzel bin frequency (may differ from target)
     int gk = (int)(0.5f + (BLOCK_SIZE * (float)s_settings.freq_hz) / 48000.0f);
     int actual_hz = gk * 48000 / BLOCK_SIZE;
@@ -3348,14 +3353,21 @@ static void decoder_audio_task(void* /*arg*/)
     int16_t stereo_buf[BLOCK_SIZE * 2];
     int16_t mono_buf[BLOCK_SIZE];
 
+    // Block-based timing: use Goertzel block count instead of millis() for
+    // carrier duration measurement.  Immune to FreeRTOS scheduling jitter.
+    const float BLOCK_MS = (float)BLOCK_SIZE / 48000.0f * 1000.0f;  // ~5.71ms
+
     float avg_dit_ms = 60.0f;  // initial estimate (~20 WPM)
     bool carrier_on = false;
-    unsigned long carrier_start = 0;
+    int carrier_start_blk = 0;
+    int block_count = 0;
     int consec_on = 0, consec_off = 0;
     const int DEBOUNCE = 3;  // require 3 consecutive matching blocks (~17ms)
 
     int debug_count = 0;
     int zero_blocks = 0;       // consecutive all-zero blocks (ADC watchdog)
+    int saturated_blocks = 0;  // consecutive all-max blocks (codec error detect)
+    int noise_carriers = 0;    // consecutive sub-20ms carrier events (flicker detect)
     while (s_decoder_active) {
         // Read one Goertzel block of stereo samples
         size_t got = s_audio->read_audio(stereo_buf, BLOCK_SIZE * 2);
@@ -3378,22 +3390,37 @@ static void decoder_audio_task(void* /*arg*/)
         // Scale so typical working level (~2000 peak at 0 dB PGA) shows ~50%.
         s_decoder_signal_level = (uint8_t)std::min(100, (int)(peak * 100 / 4096));
 
-        // ADC watchdog: if we get 100+ consecutive all-zero blocks (~570ms),
-        // the codec may have brown-out reset (e.g. WiFi TX power spike).
-        // Full codec reinit required — just re-enabling ADC doesn't recover.
+        // ADC watchdog: detect dead ADC (all zeros) or saturated ADC (all max).
+        // Either condition means the codec is in an error state and needs reinit.
+        bool need_reinit = false;
         if (peak == 0) {
-            if (++zero_blocks == 100) {
-                Log.warningln("decoder: ADC dead (100 zero blocks), full codec reinit");
-                s_audio->disable_adc();
-                s_audio->reinit_codec();
-                s_audio->enable_adc();
-                goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
-                zero_blocks = 0;
-                debug_count = 0;  // reset debug logging
-                continue;
-            }
+            saturated_blocks = 0;
+            if (++zero_blocks >= 100) need_reinit = true;  // ~570ms of zeros
+        } else if (peak >= 32700) {
+            zero_blocks = 0;
+            if (++saturated_blocks >= 50) need_reinit = true;  // ~285ms at max
         } else {
             zero_blocks = 0;
+            saturated_blocks = 0;
+        }
+        if (need_reinit) {
+            Log.warningln("decoder: ADC error (zero=%d sat=%d), full codec reinit",
+                          zero_blocks, saturated_blocks);
+            // Force carrier off before reinit to reset decoder state
+            if (carrier_on) {
+                carrier_on = false;
+                dec.set_transmitting(false);
+                consec_on = 0; consec_off = 0;
+            }
+            s_audio->disable_adc();
+            s_audio->reinit_codec();
+            s_audio->enable_adc();
+            goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
+            goertzel.set_magnitude_floor(30000.0f);
+            zero_blocks = 0;
+            saturated_blocks = 0;
+            debug_count = 0;
+            continue;
         }
 
         // Run Goertzel tone detection
@@ -3411,37 +3438,79 @@ static void decoder_audio_task(void* /*arg*/)
         if (tone) { consec_on++; consec_off = 0; }
         else      { consec_off++; consec_on = 0; }
 
+        block_count++;
+
         bool new_carrier = carrier_on;
         if (!carrier_on && consec_on >= DEBOUNCE)  new_carrier = true;
         if (carrier_on  && consec_off >= DEBOUNCE) new_carrier = false;
 
-        unsigned long now = (unsigned long)app_millis();
+        // Stuck-carrier timeout: if carrier has been ON for much longer than
+        // any reasonable dah, the detector is stuck (e.g. noise false-positive
+        // or codec error).  Force carrier OFF and discard the bogus element.
+        float carrier_dur_ms = (block_count - carrier_start_blk) * BLOCK_MS;
+        if (carrier_on && carrier_dur_ms > avg_dit_ms * 12) {
+            Log.warningln("decoder: stuck carrier (%d ms), forcing OFF",
+                          (int)carrier_dur_ms);
+            carrier_on = false;
+            dec.set_transmitting(false);
+            consec_on = 0; consec_off = 0;
+            dec.clear_letter_buf();
+        }
 
         if (new_carrier && !carrier_on) {
             // Carrier just turned ON
             carrier_on = true;
-            carrier_start = now;
+            carrier_start_blk = block_count;
             dec.set_transmitting(true);
             Log.noticeln("decoder: CARRIER ON");
         } else if (!new_carrier && carrier_on) {
             // Carrier just turned OFF — classify element
             carrier_on = false;
             dec.set_transmitting(false);
-            unsigned long dur = now - carrier_start;
+            float dur = (block_count - carrier_start_blk) * BLOCK_MS;
             Log.noticeln("decoder: CARRIER OFF dur=%d avg_dit=%d", (int)dur, (int)avg_dit_ms);
-            if (dur >= 20) {  // ignore sub-20ms glitches (noise blanker)
+            if (dur >= 20.0f) {  // ignore sub-20ms glitches (noise blanker)
+                noise_carriers = 0;  // real element resets flicker counter
                 float threshold = avg_dit_ms * 2.0f;
-                if (dur < (unsigned long)threshold) {
+                bool anomalous = (dur > avg_dit_ms * 4.5f);  // too long for any element
+                if (dur < threshold) {
                     dec.append_dot();
-                    avg_dit_ms = avg_dit_ms * 0.7f + dur * 0.3f;
+                    if (!anomalous)
+                        avg_dit_ms = avg_dit_ms * 0.85f + dur * 0.15f;
                 } else {
                     dec.append_dash();
-                    avg_dit_ms = avg_dit_ms * 0.7f + (dur / 3.0f) * 0.3f;
+                    if (!anomalous) {
+                        avg_dit_ms = avg_dit_ms * 0.85f + (dur / 3.0f) * 0.15f;
+                    } else {
+                        Log.warningln("decoder: anomalous carrier %d ms (avg_dit=%d), not updating timing",
+                                      (int)dur, (int)avg_dit_ms);
+                    }
                 }
                 // Clamp to sane range (5–60 WPM → 240–20 ms dit)
                 avg_dit_ms = std::max(20.0f, std::min(240.0f, avg_dit_ms));
                 dec.set_decode_threshold((unsigned long)(avg_dit_ms * 3.0f));
                 s_decoder_est_wpm = (int)(1200.0f / avg_dit_ms);
+            } else {
+                // Noise flicker: many sub-20ms carriers → codec in bad state.
+                // 30 consecutive noise carriers ≈ 1 second of flickering.
+                if (++noise_carriers >= 30) {
+                    Log.warningln("decoder: noise flicker (%d sub-20ms carriers), codec reinit",
+                                  noise_carriers);
+                    carrier_on = false;
+                    dec.set_transmitting(false);
+                    consec_on = 0; consec_off = 0;
+                    dec.clear_letter_buf();
+                    s_audio->disable_adc();
+                    s_audio->reinit_codec();
+                    s_audio->enable_adc();
+                    goertzel.setup((float)s_settings.freq_hz, 48000.0f, true);
+                    goertzel.set_magnitude_floor(30000.0f);
+                    noise_carriers = 0;
+                    zero_blocks = 0;
+                    saturated_blocks = 0;
+                    debug_count = 0;
+                    continue;
+                }
             }
         }
 
@@ -3861,7 +3930,20 @@ static void app_ui_tick()
         }
     }
 
-    lv_timer_handler();
+    // Defer LVGL rendering during timing-critical CW states.
+    // lv_timer_handler() can take 30-100 ms during text scroll / relayout,
+    // which delays tick() and stretches elements or inter-element gaps.
+    // Allowed: AdvancePhrase (word gap), InterCharacter (char gap ~96 ms),
+    //          Idle.  Blocked: Dot, Dash, InterSymbol (element-internal).
+    {
+        auto ps = s_trainer ? s_trainer->player_state()
+                            : MorseTrainer::PlayerState::Idle;
+        if (ps != MorseTrainer::PlayerState::Dot &&
+            ps != MorseTrainer::PlayerState::Dash &&
+            ps != MorseTrainer::PlayerState::InterSymbol) {
+            lv_timer_handler();
+        }
+    }
 
 #ifdef BOARD_POCKETWROOM
     web_server_update();

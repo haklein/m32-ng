@@ -130,8 +130,14 @@ void PocketAudioOutput::codec_enable_outputs()
 
 void PocketAudioOutput::tone_on(uint16_t frequency_hz)
 {
-    current_freq_ = frequency_hz;
-    sidetone_.setFrequency(float(frequency_hz));
+    // Only call setFrequency() when the frequency actually changes.
+    // setFrequency() resets the ComplexRotorSine phase and races with the
+    // audio task on core 1; avoiding it eliminates a data race and saves
+    // a cosf/sinf pair on every element.
+    if (frequency_hz != current_freq_) {
+        current_freq_ = frequency_hz;
+        sidetone_.setFrequency(float(frequency_hz));
+    }
     sidetone_.on();
 }
 

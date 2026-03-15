@@ -41,6 +41,13 @@ public:
     // Last computed magnitude (for debug / calibration).
     float last_magnitude() const { return last_magnitude_; }
 
+    // Override the noise floor used for threshold clamping and detection.
+    // Call after setup() to calibrate for actual hardware noise levels.
+    void set_magnitude_floor(float floor) {
+        magnitude_limit_low_ = floor;
+        if (magnitude_limit_ < floor) magnitude_limit_ = floor;
+    }
+
 private:
     float coeff_ = 0.0f;
     float sine_ = 0.0f;
