@@ -10,6 +10,7 @@
 #include <cstring>
 #include <mdns.h>
 #include <esp_heap_caps.h>
+#include <SPIFFS.h>
 
 // ── Screen geometry (logical, after rotation) ────────────────────────────────
 static constexpr int SCR_W       = 320;
@@ -518,6 +519,15 @@ button.secondary{background:#16213e;color:#0ff;border:1px solid #0ff}
 </div>
 <div class="slots" id="slot-list"></div>
 
+<h2>Content Files</h2>
+<div class="status" id="file-status"></div>
+<div style="display:flex;gap:8px;align-items:center;margin:8px 0">
+  <label class="secondary" style="background:#16213e;color:#0ff;border:1px solid #0ff;padding:8px 16px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:.85em">
+    Upload File<input type="file" onchange="uploadFile(event)" style="display:none">
+  </label>
+</div>
+<div class="slots" id="file-list"></div>
+
 <script>
 let META=[], CFG={}, groups=[];
 let cwTextBuf='';
@@ -530,6 +540,7 @@ async function init(){
   groups=[...new Set(META.map(m=>m.group))];
   buildUI();
   loadSlots();
+  loadFiles();
   updateBattery();
   pollStatus();
   pollText();
@@ -772,10 +783,132 @@ function setSlotStatus(msg){
   setTimeout(()=>el.textContent='',3000);
 }
 
+// ── Content Files ──
+async function loadFiles(){
+  try{
+    const r=await fetch('/api/files');
+    const files=await r.json();
+    const list=document.getElementById('file-list');
+    list.innerHTML='';
+    files.forEach(f=>{
+      const row=document.createElement('div');
+      row.className='slot-row';
+      row.innerHTML='<span>'+f.name+' ('+f.size+' B)</span>';
+      const dl=document.createElement('button');
+      dl.textContent='Download';dl.className='secondary';
+      dl.onclick=()=>{window.location='/api/files/download?name='+encodeURIComponent(f.name);};
+      const rm=document.createElement('button');
+      rm.textContent='Delete';rm.className='danger';
+      rm.onclick=async()=>{
+        await fetch('/api/files/delete?name='+encodeURIComponent(f.name));
+        loadFiles();setFileStatus('Deleted: '+f.name);
+      };
+      row.appendChild(dl);row.appendChild(rm);
+      list.appendChild(row);
+    });
+  }catch(e){}
+}
+
+async function uploadFile(ev){
+  const file=ev.target.files[0];
+  if(!file)return;
+  const fd=new FormData();
+  fd.append('file',file,file.name);
+  await fetch('/api/files/upload?name='+encodeURIComponent(file.name),{method:'POST',body:fd});
+  ev.target.value='';
+  loadFiles();
+  setFileStatus('Uploaded: '+file.name);
+}
+
+function setFileStatus(msg){
+  const el=document.getElementById('file-status');
+  el.textContent=msg;
+  setTimeout(()=>el.textContent='',3000);
+}
+
 init();
 </script>
 </body>
 </html>)rawliteral";
+
+// ── File management API ──────────────────────────────────────────────────────
+
+static void handle_api_files_list(AsyncWebServerRequest* req)
+{
+    File root = SPIFFS.open("/content");
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    if (root && root.isDirectory()) {
+        File f = root.openNextFile();
+        while (f) {
+            JsonObject o = arr.add<JsonObject>();
+            const char* path = f.name();
+            const char* base = strrchr(path, '/');
+            o["name"] = base ? base + 1 : path;
+            o["size"] = f.size();
+            f = root.openNextFile();
+        }
+    }
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+}
+
+static File s_upload_file;
+
+static void handle_file_upload(AsyncWebServerRequest* req, String filename,
+                               size_t index, uint8_t* data, size_t len, bool final)
+{
+    if (index == 0) {
+        String name = req->hasParam("name") ? req->getParam("name")->value() : filename;
+        String path = "/content/" + name;
+        SPIFFS.mkdir("/content");
+        s_upload_file = SPIFFS.open(path, "w");
+        if (!s_upload_file) {
+            Log.warningln("File upload: failed to open %s", path.c_str());
+            return;
+        }
+    }
+    if (s_upload_file && len) {
+        s_upload_file.write(data, len);
+    }
+    if (final && s_upload_file) {
+        s_upload_file.close();
+        Log.noticeln("File upload: %s (%d bytes)", filename.c_str(), index + len);
+    }
+}
+
+static void handle_api_files_upload(AsyncWebServerRequest* req)
+{
+    req->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handle_api_files_download(AsyncWebServerRequest* req)
+{
+    if (!req->hasParam("name")) {
+        req->send(400, "text/plain", "Missing 'name' param");
+        return;
+    }
+    String name = req->getParam("name")->value();
+    String path = "/content/" + name;
+    if (!SPIFFS.exists(path)) {
+        req->send(404, "text/plain", "File not found");
+        return;
+    }
+    req->send(SPIFFS, path, "application/octet-stream");
+}
+
+static void handle_api_files_delete(AsyncWebServerRequest* req)
+{
+    if (!req->hasParam("name")) {
+        req->send(400, "text/plain", "Missing 'name' param");
+        return;
+    }
+    String name = req->getParam("name")->value();
+    String path = "/content/" + name;
+    bool ok = SPIFFS.remove(path);
+    req->send(200, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+}
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -844,6 +977,17 @@ void web_server_start()
                  [](AsyncWebServerRequest* r) { handle_api_slot_delete(r); });
     s_server->on("/api/slots", HTTP_GET,
                  [](AsyncWebServerRequest* r) { handle_api_slots_list(r); });
+
+    // Files API (SPIFFS /content/)
+    s_server->on("/api/files", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_files_list(r); });
+    s_server->on("/api/files/upload", HTTP_POST,
+                 [](AsyncWebServerRequest* r) { handle_api_files_upload(r); },
+                 handle_file_upload);
+    s_server->on("/api/files/download", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_files_download(r); });
+    s_server->on("/api/files/delete", HTTP_GET,
+                 [](AsyncWebServerRequest* r) { handle_api_files_delete(r); });
 
     // Plain HTML page (no JS — lynx, curl, screen readers)
     s_server->on("/plain", HTTP_GET,

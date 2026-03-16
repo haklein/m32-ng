@@ -45,7 +45,7 @@
 
 // ── Global settings ────────────────────────────────────────────────────────
 struct AppSettings {
-    static constexpr uint8_t VERSION = 16;
+    static constexpr uint8_t VERSION = 17;
     uint8_t  version      = VERSION;  // NVS blob migration marker
     int      wpm          = 20;
     uint8_t  farnsworth   = 0;       // effective WPM (0=off, must be < wpm)
@@ -93,6 +93,10 @@ struct AppSettings {
     uint8_t  brightness     = 255;  // backlight 0–255 (persisted)
     // VERSION 16 — WiFi auto-connect
     bool     wifi_autostart = true; // connect WiFi at boot (disable to save power)
+    // VERSION 17 — file-based content
+    bool     cont_file      = false;   // enable file content from SPIFFS /content/
+    bool     cont_file_random = true;  // randomize lines (false = sequential)
+    char     cont_file_name[32] = {};  // selected file in /content/
 };
 static AppSettings s_settings;
 
@@ -214,7 +218,8 @@ static void load_settings()
     if (n >= sizeof(tmp.version) && tmp.version <= AppSettings::VERSION) {
         s_settings = tmp;  // old fields copied; new fields keep defaults
         if (s_settings.brightness == 0) s_settings.brightness = 255;  // never fully black
-        if (tmp.version < 16) s_settings.wifi_autostart = true;  // new in V16
+        if (tmp.version < 16) s_settings.wifi_autostart = true;
+        if (tmp.version < 17) s_settings.cont_file_random = true;
         if (s_settings.version < AppSettings::VERSION) {
             s_settings.version = AppSettings::VERSION;
             save_settings();   // persist migrated settings
@@ -261,6 +266,9 @@ static const FieldMeta s_field_meta[] = {
     {"word_max_length",  "Max Length (0=any)",FieldType::INT,   0,  15, 1, nullptr,                               "Content"},
     {"qso_max_words",    "QSO Words (0=all)", FieldType::INT,   0,   9, 1, nullptr,                               "Content"},
     {"session_size",     "Session Size (0=off)",FieldType::INT, 0,  99, 1, nullptr,                               "Content"},
+    {"cont_file",        "File",              FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
+    {"cont_file_name",   "File Name",         FieldType::STRING, 0, 31, 0, nullptr,                               "Content"},
+    {"cont_file_random", "File Randomize",    FieldType::BOOL,  0,   1, 0, nullptr,                               "Content"},
 
     {"echo_max_repeats", "Echo Repeats (0=inf)",FieldType::INT, 0,   9, 1, nullptr,                               "Training"},
     {"adaptive_speed",   "Adaptive WPM",     FieldType::BOOL,  0,   1, 0, nullptr,                               "Training"},
@@ -319,6 +327,9 @@ static void settings_field_to_json(JsonObject obj, const char* key)
     else if (!strcmp(key, "brightness"))        obj[key] = s.brightness;
     else if (!strcmp(key, "last_mode"))         obj[key] = s.last_mode;
     else if (!strcmp(key, "wifi_autostart"))   obj[key] = (int)s.wifi_autostart;
+    else if (!strcmp(key, "cont_file"))         obj[key] = s.cont_file ? 1 : 0;
+    else if (!strcmp(key, "cont_file_name"))    obj[key] = (const char*)s.cont_file_name;
+    else if (!strcmp(key, "cont_file_random"))  obj[key] = s.cont_file_random ? 1 : 0;
 }
 
 char* config_settings_to_json()
@@ -375,6 +386,13 @@ static bool settings_field_from_json(const char* key, JsonVariant val)
     else if (!strcmp(key, "session_size"))      { s.session_size = val.as<int>(); return true; }
     else if (!strcmp(key, "brightness"))        { s.brightness = val.as<int>(); return true; }
     else if (!strcmp(key, "wifi_autostart"))   { s.wifi_autostart = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "cont_file"))         { s.cont_file = val.as<int>() != 0; return true; }
+    else if (!strcmp(key, "cont_file_name")) {
+        const char* v = val.as<const char*>();
+        if (v) { strncpy(s.cont_file_name, v, sizeof(s.cont_file_name)-1); s.cont_file_name[sizeof(s.cont_file_name)-1] = 0; }
+        return true;
+    }
+    else if (!strcmp(key, "cont_file_random"))  { s.cont_file_random = val.as<int>() != 0; return true; }
     return false;
 }
 
@@ -1091,6 +1109,86 @@ static bool koch_allows(const std::string& word, const std::string& allowed)
     return true;
 }
 
+// ── File-based content ────────────────────────────────────────────────────
+// Cached line index for SPIFFS content files.  Reloaded when the filename
+// changes.  Sequential mode uses s_file_line_idx to track position.
+static std::vector<std::string> s_file_lines;
+static std::string              s_file_lines_name;   // currently loaded file
+static int                      s_file_line_idx = 0; // sequential position
+
+// List content files from SPIFFS /content/ directory.
+// Returns count; fills names[] with basenames (no path prefix).
+static int list_content_files(char names[][32], int max_files)
+{
+#ifdef BOARD_POCKETWROOM
+    File root = SPIFFS.open("/content");
+    if (!root || !root.isDirectory()) return 0;
+    int n = 0;
+    File f = root.openNextFile();
+    while (f && n < max_files) {
+        const char* path = f.name();   // e.g. "/content/words.txt"
+        const char* base = strrchr(path, '/');
+        base = base ? base + 1 : path;
+        strncpy(names[n], base, 31);
+        names[n][31] = '\0';
+        ++n;
+        f = root.openNextFile();
+    }
+    return n;
+#else
+    (void)names; (void)max_files;
+    return 0;
+#endif
+}
+
+// Load lines from a SPIFFS content file into s_file_lines cache.
+static void file_content_ensure_loaded()
+{
+#ifdef BOARD_POCKETWROOM
+    if (s_settings.cont_file_name[0] == '\0') return;
+    std::string wanted(s_settings.cont_file_name);
+    if (wanted == s_file_lines_name && !s_file_lines.empty()) return;
+
+    s_file_lines.clear();
+    s_file_line_idx = 0;
+    s_file_lines_name = wanted;
+
+    char path[48];
+    snprintf(path, sizeof(path), "/content/%s", s_settings.cont_file_name);
+    File f = SPIFFS.open(path, "r");
+    if (!f) return;
+
+    std::string line;
+    while (f.available()) {
+        char c = (char)f.read();
+        if (c == '\n' || c == '\r') {
+            if (!line.empty()) {
+                s_file_lines.push_back(line);
+                line.clear();
+            }
+        } else {
+            line += c;
+        }
+    }
+    if (!line.empty()) s_file_lines.push_back(line);
+    f.close();
+#endif
+}
+
+// Return one line from the loaded file (random or sequential).
+static std::string file_content_phrase()
+{
+    file_content_ensure_loaded();
+    if (s_file_lines.empty()) return {};
+    if (s_settings.cont_file_random) {
+        int idx = std::uniform_int_distribution<int>(0, (int)s_file_lines.size() - 1)(s_rng);
+        return s_file_lines[idx];
+    }
+    // Sequential
+    if (s_file_line_idx >= (int)s_file_lines.size()) s_file_line_idx = 0;
+    return s_file_lines[s_file_line_idx++];
+}
+
 // ── Content phrase generator ───────────────────────────────────────────────
 // Returns the next training phrase according to the current content settings.
 static std::string content_phrase()
@@ -1098,12 +1196,13 @@ static std::string content_phrase()
     std::string koch = koch_charset();
 
     // Collect enabled content types
-    int types[5]; int nt = 0;
+    int types[6]; int nt = 0;
     if (s_settings.cont_words)   types[nt++] = 0;
     if (s_settings.cont_abbrevs) types[nt++] = 1;
     if (s_settings.cont_calls)   types[nt++] = 2;
     if (s_settings.cont_chars)   types[nt++] = 3;
     if (s_settings.cont_qso)    types[nt++] = 4;
+    if (s_settings.cont_file && s_settings.cont_file_name[0]) types[nt++] = 5;
     int ml = (int)s_settings.word_max_length;
     if (nt == 0) types[nt++] = 0;   // fallback: words
 
@@ -1139,6 +1238,7 @@ static std::string content_phrase()
                 }
                 break;
             case 4: phrase = s_gen->random_qso_phrase((int)s_settings.qso_max_words); break;
+            case 5: phrase = file_content_phrase(); break;
         }
         if (koch.empty() || koch_allows(phrase, koch))
             return phrase;
@@ -2043,6 +2143,58 @@ static lv_obj_t* build_content_screen()
                                & LV_STATE_CHECKED) != 0;
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* cb_file = make_cb("File", s_settings.cont_file);
+    lv_obj_add_event_cb(cb_file, [](lv_event_t* e) {
+        s_settings.cont_file = (lv_obj_get_state(lv_event_get_target_obj(e))
+                                & LV_STATE_CHECKED) != 0;
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // File selector dropdown
+    {
+        lv_obj_t* fl_lbl = lv_label_create(cont);
+        lv_label_set_text(fl_lbl, "File");
+        lv_obj_set_pos(fl_lbl, LBL_X, cur_y + 7);
+
+        lv_obj_t* fl_dd = lv_dropdown_create(cont);
+        // Populate from SPIFFS /content/ directory
+        char fnames[16][32];
+        int nf = list_content_files(fnames, 16);
+        std::string opts;
+        int sel = 0;
+        for (int i = 0; i < nf; i++) {
+            if (i > 0) opts += '\n';
+            opts += fnames[i];
+            if (!strcmp(fnames[i], s_settings.cont_file_name)) sel = i;
+        }
+        if (nf == 0) opts = "(no files)";
+        lv_dropdown_set_options(fl_dd, opts.c_str());
+        lv_dropdown_set_selected(fl_dd, sel);
+        lv_obj_set_width(fl_dd, CTL_W);
+        lv_obj_set_pos(fl_dd, CTL_X, cur_y + 2);
+        lv_group_add_obj(s_content_group, fl_dd);
+        lv_obj_add_event_cb(fl_dd, [](lv_event_t* e) {
+            char buf[32];
+            lv_dropdown_get_selected_str(lv_event_get_target_obj(e), buf, sizeof(buf));
+            if (strcmp(buf, "(no files)") != 0) {
+                strncpy(s_settings.cont_file_name, buf, sizeof(s_settings.cont_file_name) - 1);
+                s_settings.cont_file_name[sizeof(s_settings.cont_file_name) - 1] = '\0';
+                s_file_lines_name.clear();  // force reload
+                save_settings();
+            }
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+        cur_y += CTL_ROW;
+    }
+
+    // File randomize checkbox
+    lv_obj_t* cb_frand = make_cb("Randomize lines", s_settings.cont_file_random);
+    lv_obj_add_event_cb(cb_frand, [](lv_event_t* e) {
+        s_settings.cont_file_random = (lv_obj_get_state(lv_event_get_target_obj(e))
+                                       & LV_STATE_CHECKED) != 0;
+        save_settings();
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    cur_y += 4;
 
     // Character Set
     lv_obj_t* cg_lbl = lv_label_create(cont);

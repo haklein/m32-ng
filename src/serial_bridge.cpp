@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <SPIFFS.h>
 #include <cstring>
 
 static String s_line_buf;
@@ -173,6 +174,30 @@ static void dispatch(const String& method, const String& path, const String& bod
         else if (base == "/api/slots/delete") {
             String name = url_decode(query_param(path, "name"));
             reply_ok(!name.isEmpty() && config_delete_slot(name.c_str()));
+        }
+        else if (base == "/api/files") {
+            File root = SPIFFS.open("/content");
+            JsonDocument doc;
+            JsonArray arr = doc.to<JsonArray>();
+            if (root && root.isDirectory()) {
+                File f = root.openNextFile();
+                while (f) {
+                    JsonObject o = arr.add<JsonObject>();
+                    const char* fp = f.name();
+                    const char* bn = strrchr(fp, '/');
+                    o["name"] = bn ? bn + 1 : fp;
+                    o["size"] = f.size();
+                    f = root.openNextFile();
+                }
+            }
+            String out;
+            serializeJson(doc, out);
+            Serial.println(out);
+        }
+        else if (base == "/api/files/delete") {
+            String name = url_decode(query_param(path, "name"));
+            if (name.isEmpty()) { reply_ok(false); return; }
+            reply_ok(SPIFFS.remove("/content/" + name));
         }
         else if (base == "/api/scan") {
             int n = WiFi.scanNetworks();
