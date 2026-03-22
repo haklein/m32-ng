@@ -1,0 +1,158 @@
+{
+  "versions": [
+    {
+      "version": "0.0.1",
+      "tag": "v0.0.1",
+      "date": "2026-03-02T18:43:24+01:00",
+      "commit": "668f9b3",
+      "dir": "firmware/v0.0.1"
+    },
+    {
+      "version": "0.0.2",
+      "tag": "v0.0.2",
+      "date": "2026-03-04T11:07:22+01:00",
+      "commit": "4e4aec9",
+      "dir": "firmware/v0.0.2"
+    },
+    {
+      "version": "0.0.3",
+      "tag": "v0.0.3",
+      "date": "2026-03-06T23:45:51+01:00",
+      "commit": "127fd4a",
+      "dir": "firmware/v0.0.3"
+    },
+    {
+      "version": "0.0.4",
+      "tag": "v0.0.4",
+      "date": "2026-03-07T08:23:33+01:00",
+      "commit": "eb71ad6",
+      "dir": "firmware/v0.0.4"
+    },
+    {
+      "version": "0.0.4",
+      "tag": "v0.0.4",
+      "date": "2026-03-07T08:23:33+01:00",
+      "commit": "eb71ad6",
+      "dir": "firmware/v0.0.4"
+    },
+    {
+      "version": "0.0.3",
+      "tag": "v0.0.3",
+      "date": "2026-03-06T23:45:51+01:00",
+      "commit": "127fd4a",
+      "dir": "firmware/v0.0.3"
+    },
+    {
+      "version": "0.0.5",
+      "tag": "v0.0.5",
+      "date": "2026-03-08T09:34:38+01:00",
+      "commit": "8efa8ec",
+      "dir": "firmware/v0.0.5"
+    },
+    {
+      "version": "0.0.6",
+      "tag": "v0.0.6",
+      "date": "2026-03-09T10:03:36+01:00",
+      "commit": "763ee92",
+      "dir": "firmware/v0.0.6"
+    },
+    {
+      "version": "0.0.7",
+      "tag": "v0.0.7",
+      "date": "2026-03-09T22:56:06+01:00",
+      "commit": "0ddce4b",
+      "dir": "firmware/v0.0.7"
+    },
+    {
+      "version": "0.0.8",
+      "tag": "v0.0.8",
+      "date": "2026-03-11T10:13:04+01:00",
+      "commit": "d4cc424",
+      "dir": "firmware/v0.0.8"
+    },
+    {
+      "version": "0.0.9",
+      "tag": "v0.0.9",
+      "date": "2026-03-12T19:57:32+01:00",
+      "commit": "ae402a2",
+      "dir": "firmware/v0.0.9"
+    },
+    {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "date": "2026-03-15T20:21:18+01:00",
+      "commit": "7b77fd1",
+      "dir": "firmware/v0.1.0"
+    },
+    {
+      "version": "dev-f658dc8",
+      "tag": null,
+      "date": "2026-03-22T11:47:49+01:00",
+      "commit": "f658dc8",
+      "dir": "firmware/dev-f658dc8"
+    },
+    {
+      "version": "dev-4fa774e",
+      "tag": null,
+      "date": "2026-03-16T20:09:19+01:00",
+      "commit": "4fa774e",
+      "dir": "firmware/dev-4fa774e"
+    },
+    {
+      "version": "dev-fd42a6e",
+      "tag": null,
+      "date": "2026-03-14T19:37:50+01:00",
+      "commit": "fd42a6e",
+      "dir": "firmware/dev-fd42a6e"
+    },
+    {
+      "version": "dev-59c3fb7",
+      "tag": null,
+      "date": "2026-03-12T23:51:45+01:00",
+      "commit": "59c3fb7",
+      "dir": "firmware/dev-59c3fb7"
+    },
+    {
+      "version": "dev-1900b8a",
+      "tag": null,
+      "date": "2026-03-09T23:45:49+01:00",
+      "commit": "1900b8a",
+      "dir": "firmware/dev-1900b8a"
+    },
+    {
+      "version": "dev-7ecf700",
+      "tag": null,
+      "date": "2026-03-09T23:16:31+01:00",
+      "commit": "7ecf700",
+      "dir": "firmware/dev-7ecf700"
+    },
+    {
+      "version": "dev-9eed024",
+      "tag": null,
+      "date": "2026-03-09T18:58:18+01:00",
+      "commit": "9eed024",
+      "dir": "firmware/dev-9eed024"
+    },
+    {
+      "version": "dev-05c2477",
+      "tag": null,
+      "date": "2026-03-08T19:02:45+01:00",
+      "commit": "05c2477",
+      "dir": "firmware/dev-05c2477"
+    },
+    {
+      "version": "dev-304715c",
+      "tag": null,
+      "date": "2026-03-08T10:37:21+01:00",
+      "commit": "304715c",
+      "dir": "firmware/dev-304715c"
+    },
+    {
+      "version": "dev-331be58",
+      "tag": null,
+      "date": "2026-03-08T10:31:31+01:00",
+      "commit": "331be58",
+      "dir": "firmware/dev-331be58"
+    }
+  ]
+}
