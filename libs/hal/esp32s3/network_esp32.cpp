@@ -1,4 +1,4 @@
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "network_esp32.h"
 #include <WiFi.h>
@@ -141,4 +141,4 @@ bool Esp32Network::cw_is_connected()
     return cw_connected_ && wifi_is_connected();
 }
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

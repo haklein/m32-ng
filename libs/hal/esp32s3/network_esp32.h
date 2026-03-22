@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "../interfaces/i_network.h"
 #include <WiFiUdp.h>
@@ -34,4 +34,4 @@ private:
     uint16_t  cw_remote_port_ = 0;
 };
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

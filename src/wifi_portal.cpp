@@ -1,4 +1,4 @@
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "wifi_portal.h"
 
@@ -171,4 +171,4 @@ void WifiPortal::loop()
         static_cast<DNSServer*>(dns_)->processNextRequest();
 }
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

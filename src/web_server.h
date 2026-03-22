@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 // HTTP server: config API, mode control, screenshots, plain-text UI.
 //

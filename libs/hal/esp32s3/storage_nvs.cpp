@@ -1,4 +1,4 @@
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "storage_nvs.h"
 
@@ -73,4 +73,4 @@ void PocketStorage::commit()
     // This method exists for interfaces that batch writes.
 }
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

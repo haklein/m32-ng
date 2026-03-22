@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include <lvgl.h>
 
@@ -13,4 +13,4 @@ lv_obj_t* qr_canvas_create(lv_obj_t* parent, const char* text,
 // Free the internal draw buffer.  Call before the canvas is deleted.
 void qr_canvas_destroy();
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

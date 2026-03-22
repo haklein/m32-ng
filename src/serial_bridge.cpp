@@ -1,4 +1,4 @@
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "serial_bridge.h"
 #include "config_api.h"
@@ -301,4 +301,4 @@ void serial_bridge_poll()
     }
 }
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

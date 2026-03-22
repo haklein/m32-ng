@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 // ESP32 NVS-backed storage via the Preferences library.
 // File-system methods are stubs (LittleFS not yet wired).
@@ -41,4 +41,4 @@ private:
     Preferences prefs_;
 };
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

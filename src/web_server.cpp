@@ -1,4 +1,4 @@
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "web_server.h"
 #include "config_api.h"
@@ -1026,4 +1026,4 @@ void web_server_stop()
     }
 }
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

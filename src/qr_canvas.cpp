@@ -1,4 +1,4 @@
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include "qr_canvas.h"
 #include <qrcode.h>
@@ -60,4 +60,4 @@ void qr_canvas_destroy()
     s_canvas_buf = nullptr;
 }
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

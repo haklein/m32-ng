@@ -1,0 +1,6 @@
+{
+  "name": "hal-original-m32",
+  "version": "0.0.1",
+  "description": "Original Morserino-32 (Heltec WiFi LoRa 32 V2) HAL: PWM audio, touch input, ADC decoder",
+  "platforms": ["espressif32"]
+}

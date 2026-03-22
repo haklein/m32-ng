@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 
 #include <functional>
 #include "i_network.h"
@@ -47,4 +47,4 @@ private:
     bool                running_ = false;
 };
 
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED

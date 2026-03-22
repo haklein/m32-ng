@@ -3,9 +3,10 @@
 ## Overview
 
 The Morserino-32 NG is a versatile CW (Morse code) trainer and keyer. It runs on the
-**Morserino Pocket** (ESP32-S3) hardware, the **M5Stack Core2**, and as a **desktop
-simulator** (SDL2). All three platforms share the same user interface and feature set
-(with minor hardware-specific differences noted below).
+**Morserino Pocket** (ESP32-S3) hardware, the **original Morserino-32** (Heltec WiFi
+LoRa 32 V2), the **M5Stack Core2**, and as a **desktop simulator** (SDL2). All
+platforms share the same user interface and feature set (with minor hardware-specific
+differences noted below).
 
 ---
 
@@ -21,6 +22,22 @@ simulator** (SDL2). All three platforms share the same user interface and featur
 | **Encoder button** | Press the encoder | Short press: select or pause/resume. Long press: back / exit to menu |
 | **Aux button** | Side button | Single press: toggle WPM/Volume mode. Double press: toggle Scroll mode. Long press: cycle brightness |
 | **External paddle jack** | 3.5 mm jack | Connect external iambic paddle or straight key |
+
+### Original Morserino-32
+
+The original Morserino-32 uses a Heltec WiFi LoRa 32 V2 module with a 128x64
+monochrome OLED display and PWM audio output. Controls are the same as the Pocket
+(encoder, touch paddles, aux button, external paddle jack) but on different GPIO pins.
+
+**Hardware differences from Pocket:**
+- 128x64 SSD1306 OLED display (monochrome) instead of 170x320 colour TFT
+- PWM buzzer audio instead of I2S codec (no ADSR envelope shaping)
+- CW decoder via analog ADC input instead of I2S microphone (deferred)
+- No backlight brightness control (OLED)
+- ESP32 touch behavior is inverted from ESP32-S3 (lower value = touched)
+- LoRa support deferred
+
+Build with: `pio run -e original_m32`
 
 ### Simulator (Desktop) Keyboard
 

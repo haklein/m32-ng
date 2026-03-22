@@ -36,7 +36,7 @@
 #include "mopp_codec.h"
 #include "rx_cw_player.h"
 #include "cw_invaders.h"
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 #include "config_api.h"
 #include <ArduinoJson.h>
 #endif
@@ -102,17 +102,26 @@ static AppSettings s_settings;
 
 static const lv_font_t* cw_text_font()
 {
+#if LV_FONT_UNSCII_8
+    if (SCREEN_H <= 80) return &lv_font_unscii_8;
+#endif
     return s_settings.text_font_size == 0 ? &lv_font_intel_20 : &lv_font_intel_28;
 }
 
 static const lv_font_t* ui_font()
 {
+#if LV_FONT_MONTSERRAT_10
+    if (SCREEN_H <= 80) return &lv_font_montserrat_10;
+#endif
     return s_settings.text_font_size == 0 ? &lv_font_intel_14 : &lv_font_intel_20;
 }
 
 // Menu font: montserrat (includes LVGL symbol glyphs for icons).
 static const lv_font_t* menu_font()
 {
+#if LV_FONT_MONTSERRAT_10
+    if (SCREEN_H <= 80) return &lv_font_montserrat_10;
+#endif
     return s_settings.text_font_size == 0
         ? &lv_font_montserrat_14 : &lv_font_montserrat_20;
 }
@@ -120,6 +129,27 @@ static const lv_font_t* menu_font()
 static lv_coord_t content_y()
 {
     return lv_font_get_line_height(menu_font()) + 4 + 2;  // font height + 2*pad + gap
+}
+
+// Focus text style for low-depth displays: black text on the theme's
+// white focus background.  Only the text color is set here — the
+// background is handled by the LVGL default theme (white primary).
+#if LV_COLOR_DEPTH <= 8
+static lv_style_t s_focus_text_style;
+static bool       s_focus_text_init = false;
+#endif
+
+static void group_add(lv_group_t* grp, lv_obj_t* obj)
+{
+    lv_group_add_obj(grp, obj);
+#if LV_COLOR_DEPTH <= 8
+    if (!s_focus_text_init) {
+        lv_style_init(&s_focus_text_style);
+        lv_style_set_text_color(&s_focus_text_style, lv_color_hex(0x000000));
+        s_focus_text_init = true;
+    }
+    lv_obj_add_style(obj, &s_focus_text_style, LV_STATE_FOCUS_KEY);
+#endif
 }
 
 // ── Active CW mode ─────────────────────────────────────────────────────────
@@ -144,7 +174,7 @@ static void    (*s_set_brightness)(uint8_t) = nullptr; // backlight 0–255
 // ── Dedicated CW task (pocketwroom only) ─────────────────────────────────
 // Moves PaddleCtl/IambicKeyer/StraightKeyer/MorseDecoder to a high-priority
 // FreeRTOS task on Core 1, isolating CW timing from LVGL render spikes.
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -188,7 +218,7 @@ static lv_obj_t*   s_inv_gameover_lbl = nullptr;
 static CWTextField*   s_dec_tf          = nullptr;  // decoded text
 static lv_obj_t*      s_dec_bar         = nullptr;  // signal level bar
 static lv_obj_t*      s_dec_wpm_lbl     = nullptr;  // estimated WPM label
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 static TaskHandle_t   s_decoder_task_handle = nullptr;
 static volatile bool  s_decoder_active  = false;
 static volatile uint8_t s_decoder_signal_level = 0;  // 0–100
@@ -227,7 +257,7 @@ static void load_settings()
     }
 }
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 // Forward declaration needed by config API (defined later in this file)
 static void apply_settings();
 
@@ -512,7 +542,7 @@ BatteryInfo config_get_battery_info()
     return info;
 }
 
-#endif // BOARD_POCKETWROOM — config API
+#endif // BOARD_EMBEDDED — config API
 
 // ── CW engine (keyer + echo modes) ────────────────────────────────────────
 static PaddleCtl*      s_paddle          = nullptr;
@@ -553,7 +583,7 @@ StatusInfo config_get_status()
                 s_active_mode == ActiveMode::ECHO ||
                 s_active_mode == ActiveMode::CHATBOT) && s_gen_paused;
     s.wpm = s_settings.wpm;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     s.decoder_signal = s_decoder_signal_level;
     s.decoder_wpm    = s_decoder_est_wpm;
 #endif
@@ -651,7 +681,7 @@ static volatile bool s_wifi_creds_ready      = false;
 static bool          s_wifi_portal_pending   = false;  // deferred portal start
 static char          s_pending_ssid[33]      = {};
 static char          s_pending_pass[65]      = {};
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 #include "wifi_portal.h"
 #include "qr_canvas.h"
 #include "web_server.h"
@@ -700,7 +730,7 @@ bool config_set_wifi(const char* ssid, const char* pass)
 // successfully connected now.
 static bool ensure_wifi_connected()
 {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     if (!s_network) return false;
     if (s_network->wifi_is_connected()) return true;
     char ssid[33] = {}, pass[65] = {};
@@ -727,6 +757,16 @@ static lv_group_t* s_settings_group = nullptr;
 static lv_group_t* s_content_group  = nullptr;
 static lv_group_t* s_wifi_group     = nullptr;
 static lv_group_t* s_inet_group    = nullptr;
+
+// Set encoder input group and apply initial mono focus highlight.
+static void set_enc_group(lv_group_t* grp)
+{
+    lv_indev_set_group(s_enc_indev, grp);
+    if (grp) {
+        lv_obj_t* f = lv_group_get_focused(grp);
+        if (f) lv_obj_add_state(f, LV_STATE_FOCUS_KEY);
+    }
+}
 
 // ── Encoder adjust mode (FN button cycles: WPM / Volume / Scroll) ───────
 enum class EncoderMode { WPM, VOLUME, SCROLL };
@@ -762,7 +802,7 @@ static void update_status_bar_info()
             case EncoderMode::VOLUME: s_active_sb->set_volume(s_settings.volume); break;
             case EncoderMode::SCROLL: s_active_sb->set_scroll(); break;
         }
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
         if (s_network) {
             bool conn = s_network->wifi_is_connected();
             s_active_sb->set_wifi(conn, !conn && s_wifi_portal_pending);
@@ -821,7 +861,7 @@ static bool cw_mode_active();  // defined below
 // On pocketwroom this runs on the CW task — must not touch LVGL or MorseTrainer.
 static void on_straight_state(PlayState ps)
 {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     if (!s_cw_engine_active) return;
 #else
     if (!cw_mode_active()) return;
@@ -829,11 +869,11 @@ static void on_straight_state(PlayState ps)
     switch (ps) {
     case PLAY_STATE_STRAIGHT_ON:
         s_audio->tone_on(s_settings.freq_hz);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
         digitalWrite(PIN_KEYER, HIGH);
 #endif
         s_decoder->set_transmitting(true);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
         s_cw_last_element_end_t = (unsigned long)app_millis();
         s_cw_tame_echo = true;
 #else
@@ -851,11 +891,11 @@ static void on_straight_state(PlayState ps)
         break;
     case PLAY_STATE_STRAIGHT_OFF:
         s_audio->tone_off();
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
         digitalWrite(PIN_KEYER, LOW);
 #endif
         s_decoder->set_transmitting(false);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
         s_cw_last_element_end_t = (unsigned long)app_millis();
 #else
         s_keyer_last_element_end_t = (unsigned long)app_millis();
@@ -924,13 +964,13 @@ static void on_play_state(PlayState state)
         case PLAY_STATE_DOT_ON:
         case PLAY_STATE_DASH_ON:
             s_audio->tone_on(s_settings.freq_hz);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             digitalWrite(PIN_KEYER, HIGH);
 #endif
             s_decoder->set_transmitting(true);
             if (s_inet_cw_active)
                 s_timing_ringbuf.push(true, (uint32_t)now);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_last_element_end_t = now;
 #else
             s_keyer_last_element_end_t = now;
@@ -938,14 +978,14 @@ static void on_play_state(PlayState state)
             break;
         case PLAY_STATE_DOT_OFF:
             s_audio->tone_off();
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             digitalWrite(PIN_KEYER, LOW);
 #endif
             s_decoder->append_dot();
             s_decoder->set_transmitting(false);
             if (s_inet_cw_active)
                 s_timing_ringbuf.push(false, (uint32_t)now);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_last_element_end_t = now;
 #else
             s_keyer_last_element_end_t = now;
@@ -953,14 +993,14 @@ static void on_play_state(PlayState state)
             break;
         case PLAY_STATE_DASH_OFF:
             s_audio->tone_off();
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             digitalWrite(PIN_KEYER, LOW);
 #endif
             s_decoder->append_dash();
             s_decoder->set_transmitting(false);
             if (s_inet_cw_active)
                 s_timing_ringbuf.push(false, (uint32_t)now);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_last_element_end_t = now;
 #else
             s_keyer_last_element_end_t = now;
@@ -1120,7 +1160,7 @@ static int                      s_file_line_idx = 0; // sequential position
 // Returns count; fills names[] with basenames (no path prefix).
 static int list_content_files(char names[][32], int max_files)
 {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     File root = SPIFFS.open("/content");
     if (!root || !root.isDirectory()) return 0;
     int n = 0;
@@ -1144,7 +1184,7 @@ static int list_content_files(char names[][32], int max_files)
 // Load lines from a SPIFFS content file into s_file_lines cache.
 static void file_content_ensure_loaded()
 {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     if (s_settings.cont_file_name[0] == '\0') return;
     std::string wanted(s_settings.cont_file_name);
     if (wanted == s_file_lines_name && !s_file_lines.empty()) return;
@@ -1262,13 +1302,13 @@ static void push_mode_screen(int idx)
         ns = build_keyer_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::KEYER;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = true;
 #endif
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         };
         leave_cb = []() {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = false;
             digitalWrite(PIN_KEYER, LOW);
 #endif
@@ -1287,14 +1327,14 @@ static void push_mode_screen(int idx)
             s_session_count = 0;
             s_trainer->set_state(MorseTrainer::TrainerState::Player);
             s_trainer->set_playing();
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         };
         leave_cb = []() {
             s_active_mode      = ActiveMode::NONE;
             s_encoder_mode     = EncoderMode::WPM;
             s_trainer->set_idle();
             s_audio->tone_off();
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             digitalWrite(PIN_KEYER, LOW);
 #endif
             s_pending_gen_phrase.clear();
@@ -1306,15 +1346,15 @@ static void push_mode_screen(int idx)
         enter_cb = []() {
             s_active_mode = ActiveMode::ECHO;
             s_session_count = 0;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = true;
 #endif
             s_trainer->set_state(MorseTrainer::TrainerState::Echo);
             s_trainer->set_playing();
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         };
         leave_cb = []() {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = false;
             digitalWrite(PIN_KEYER, LOW);
 #endif
@@ -1332,7 +1372,7 @@ static void push_mode_screen(int idx)
         ns = build_chatbot_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::CHATBOT;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = true;
 #endif
             s_chatbot = new CWChatbot(
@@ -1363,10 +1403,10 @@ static void push_mode_screen(int idx)
                 depths[std::min((int)s_settings.chatbot_qso_depth, 2)]);
             s_chatbot->set_rng_seed((unsigned int)app_millis());
             s_chatbot->start();
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         };
         leave_cb = []() {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = false;
             digitalWrite(PIN_KEYER, LOW);
 #endif
@@ -1384,17 +1424,17 @@ static void push_mode_screen(int idx)
         };
     } else if (idx == 4) {
         ns = build_content_screen();
-        enter_cb = []() { lv_indev_set_group(s_enc_indev, s_content_group); };
+        enter_cb = []() { set_enc_group(s_content_group); };
         leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
     } else if (idx == 5) {
         ns = build_settings_screen();
-        enter_cb = []() { lv_indev_set_group(s_enc_indev, s_settings_group); };
+        enter_cb = []() { set_enc_group(s_settings_group); };
         leave_cb = []() { delete s_active_sb; s_active_sb = nullptr; };
     } else if (idx == 6) {
         ns = build_wifi_screen();
         enter_cb = []() {
-            lv_indev_set_group(s_enc_indev, s_wifi_group);
-#ifdef BOARD_POCKETWROOM
+            set_enc_group(s_wifi_group);
+#ifdef BOARD_EMBEDDED
             // Try saved creds first (needed when wifi_autostart is off)
             ensure_wifi_connected();
             // Only start captive portal if not already connected.
@@ -1407,7 +1447,7 @@ static void push_mode_screen(int idx)
         };
         leave_cb = []() {
             s_wifi_portal_pending = false;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             if (s_portal) { s_portal->end(); delete s_portal; s_portal = nullptr; }
             qr_canvas_destroy();
 #endif
@@ -1419,10 +1459,10 @@ static void push_mode_screen(int idx)
         ns = build_inet_cw_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::INTERNET_CW;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = true;
 #endif
-            lv_indev_set_group(s_enc_indev, s_inet_group);
+            set_enc_group(s_inet_group);
         };
         leave_cb = []() {
             // This fires when:
@@ -1433,7 +1473,7 @@ static void push_mode_screen(int idx)
             if (!s_inet_cw_active) {
                 // Case (b): leaving Internet CW entirely
                 inet_cw_disconnect();  // no-op if not connected
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
                 s_cw_engine_active = false;
                 digitalWrite(PIN_KEYER, LOW);
 #endif
@@ -1462,10 +1502,10 @@ static void push_mode_screen(int idx)
         ns = build_invaders_screen();
         enter_cb = []() {
             s_active_mode = ActiveMode::INVADERS;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = true;
 #endif
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         };
         leave_cb = []() {
             if (s_invaders_game) {
@@ -1479,7 +1519,7 @@ static void push_mode_screen(int idx)
             s_inv_input_lbl = nullptr;
             s_inv_wpm_lbl   = nullptr;
             s_inv_gameover_lbl = nullptr;
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_cw_engine_active = false;
 #endif
             s_active_mode = ActiveMode::NONE;
@@ -1499,10 +1539,10 @@ static void push_mode_screen(int idx)
             xTaskCreatePinnedToCore(decoder_audio_task, "decoder",
                                     8192, nullptr, 5, &s_decoder_task_handle, 1);
 #endif
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         };
         leave_cb = []() {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
             s_decoder_active = false;
             if (s_decoder_task_handle) {
                 // Wait for task to finish (it checks s_decoder_active)
@@ -1572,7 +1612,7 @@ static lv_obj_t* build_main_menu()
     for (int i = 0; i < 10; ++i) {
         lv_obj_t* btn = lv_list_add_button(list, items[i].icon, items[i].label);
         lv_obj_set_style_text_font(btn, menu_font(), 0);
-        lv_group_add_obj(s_menu_group, btn);
+        group_add(s_menu_group, btn);
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             push_mode_screen((int)(intptr_t)lv_event_get_user_data(e));
         }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -1777,6 +1817,10 @@ static lv_obj_t* build_settings_screen()
         return row;
     };
 
+    // Control widths scaled to screen — spinbox ~40% of screen, dropdown ~50%
+    const lv_coord_t spn_w = (SCREEN_W < 200) ? (SCREEN_W * 2 / 5) : 100;
+    const lv_coord_t dd_w  = (SCREEN_W < 200) ? (SCREEN_W / 2)     : 140;
+
     // WPM
     {
         lv_obj_t* row = make_row("Speed (WPM)");
@@ -1784,8 +1828,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_range(spn, 5, 40);
         lv_spinbox_set_digit_count(spn, 2);
         lv_spinbox_set_value(spn, s_settings.wpm);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.wpm = (int)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
@@ -1800,8 +1844,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_range(spn, 0, 40);
         lv_spinbox_set_digit_count(spn, 2);
         lv_spinbox_set_value(spn, s_settings.farnsworth);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.farnsworth = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
@@ -1815,8 +1859,8 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* dd = lv_dropdown_create(row);
         lv_dropdown_set_options(dd, "Iambic A\nIambic B");
         lv_dropdown_set_selected(dd, s_settings.mode_a ? 0u : 1u);
-        lv_obj_set_width(dd, 140);
-        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_set_width(dd, dd_w);
+        group_add(s_settings_group, dd);
         lv_obj_add_event_cb(dd, [](lv_event_t* e) {
             s_settings.mode_a = (lv_dropdown_get_selected(lv_event_get_target_obj(e)) == 0u);
             apply_settings();
@@ -1832,8 +1876,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_step(spn, 5);
         lv_spinbox_set_digit_count(spn, 3);
         lv_spinbox_set_value(spn, s_settings.curtisb_dit_pct);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.curtisb_dit_pct = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
@@ -1849,8 +1893,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_step(spn, 5);
         lv_spinbox_set_digit_count(spn, 3);
         lv_spinbox_set_value(spn, s_settings.curtisb_dah_pct);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.curtisb_dah_pct = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
@@ -1866,8 +1910,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_digit_count(spn, 3);
         lv_spinbox_set_step(spn, 10);
         lv_spinbox_set_value(spn, s_settings.freq_hz);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.freq_hz = (uint16_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             save_settings();
@@ -1881,8 +1925,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_range(spn, 0, 20);
         lv_spinbox_set_digit_count(spn, 2);
         lv_spinbox_set_value(spn, s_settings.volume);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.volume = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             s_audio->set_volume(s_settings.volume);
@@ -1897,8 +1941,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_range(spn, 1, 15);
         lv_spinbox_set_digit_count(spn, 2);
         lv_spinbox_set_value(spn, s_settings.adsr_ms);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.adsr_ms = (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
             apply_settings();
@@ -1912,8 +1956,8 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* dd = lv_dropdown_create(row);
         lv_dropdown_set_options(dd, "Normal\nLarge");
         lv_dropdown_set_selected(dd, s_settings.text_font_size);
-        lv_obj_set_width(dd, 140);
-        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_set_width(dd, dd_w);
+        group_add(s_settings_group, dd);
         lv_obj_add_event_cb(dd, [](lv_event_t* e) {
             s_settings.text_font_size =
                 (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
@@ -1928,8 +1972,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_range(spn, 0, 9);
         lv_spinbox_set_digit_count(spn, 1);
         lv_spinbox_set_value(spn, s_settings.echo_max_repeats);
-        lv_obj_set_width(spn, 80);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.echo_max_repeats =
                 (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
@@ -1944,7 +1988,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* cb = lv_checkbox_create(row);
         lv_checkbox_set_text(cb, "");
         if (s_settings.adaptive_speed) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        lv_group_add_obj(s_settings_group, cb);
+        group_add(s_settings_group, cb);
         lv_obj_add_event_cb(cb, [](lv_event_t* e) {
             s_settings.adaptive_speed =
                 lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
@@ -1959,8 +2003,8 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* dd = lv_dropdown_create(row);
         lv_dropdown_set_options(dd, "Minimal\nStandard\nRagchew");
         lv_dropdown_set_selected(dd, s_settings.chatbot_qso_depth);
-        lv_obj_set_width(dd, 140);
-        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_set_width(dd, dd_w);
+        group_add(s_settings_group, dd);
         lv_obj_add_event_cb(dd, [](lv_event_t* e) {
             s_settings.chatbot_qso_depth =
                 (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(e));
@@ -1975,8 +2019,8 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* dd = lv_dropdown_create(row);
         lv_dropdown_set_options(dd, "Straight\nIambic");
         lv_dropdown_set_selected(dd, s_settings.ext_key_iambic ? 1u : 0u);
-        lv_obj_set_width(dd, 140);
-        lv_group_add_obj(s_settings_group, dd);
+        lv_obj_set_width(dd, dd_w);
+        group_add(s_settings_group, dd);
         lv_obj_add_event_cb(dd, [](lv_event_t* e) {
             s_settings.ext_key_iambic =
                 (lv_dropdown_get_selected(lv_event_get_target_obj(e)) == 1u);
@@ -1990,7 +2034,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* cb = lv_checkbox_create(row);
         lv_checkbox_set_text(cb, "");
         if (s_settings.paddle_swap) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        lv_group_add_obj(s_settings_group, cb);
+        group_add(s_settings_group, cb);
         lv_obj_add_event_cb(cb, [](lv_event_t* e) {
             s_settings.paddle_swap =
                 (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
@@ -2004,7 +2048,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* cb = lv_checkbox_create(row);
         lv_checkbox_set_text(cb, "");
         if (s_settings.ext_key_swap) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        lv_group_add_obj(s_settings_group, cb);
+        group_add(s_settings_group, cb);
         lv_obj_add_event_cb(cb, [](lv_event_t* e) {
             s_settings.ext_key_swap =
                 (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
@@ -2018,7 +2062,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* cb = lv_checkbox_create(row);
         lv_checkbox_set_text(cb, "");
         if (s_settings.screen_flip) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        lv_group_add_obj(s_settings_group, cb);
+        group_add(s_settings_group, cb);
         lv_obj_add_event_cb(cb, [](lv_event_t* e) {
             s_settings.screen_flip =
                 (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
@@ -2034,8 +2078,8 @@ static lv_obj_t* build_settings_screen()
         lv_spinbox_set_range(spn, 0, 60);
         lv_spinbox_set_digit_count(spn, 2);
         lv_spinbox_set_value(spn, s_settings.sleep_timeout_min);
-        lv_obj_set_width(spn, 100);
-        lv_group_add_obj(s_settings_group, spn);
+        lv_obj_set_width(spn, spn_w);
+        group_add(s_settings_group, spn);
         lv_obj_add_event_cb(spn, [](lv_event_t* e) {
             s_settings.sleep_timeout_min =
                 (uint8_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
@@ -2049,7 +2093,7 @@ static lv_obj_t* build_settings_screen()
         lv_obj_t* cb = lv_checkbox_create(row);
         lv_checkbox_set_text(cb, "");
         if (s_settings.quick_start) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        lv_group_add_obj(s_settings_group, cb);
+        group_add(s_settings_group, cb);
         lv_obj_add_event_cb(cb, [](lv_event_t* e) {
             s_settings.quick_start =
                 (lv_obj_get_state(lv_event_get_target_obj(e)) & LV_STATE_CHECKED) != 0;
@@ -2105,7 +2149,7 @@ static lv_obj_t* build_content_screen()
         lv_checkbox_set_text(cb, text);
         if (checked) lv_obj_add_state(cb, LV_STATE_CHECKED);
         lv_obj_set_pos(cb, LBL_X, cur_y);
-        lv_group_add_obj(s_content_group, cb);
+        group_add(s_content_group, cb);
         cur_y += CB_ROW;
         return cb;
     };
@@ -2173,7 +2217,7 @@ static lv_obj_t* build_content_screen()
         lv_dropdown_set_selected(fl_dd, sel);
         lv_obj_set_width(fl_dd, CTL_W);
         lv_obj_set_pos(fl_dd, CTL_X, cur_y + 2);
-        lv_group_add_obj(s_content_group, fl_dd);
+        group_add(s_content_group, fl_dd);
         lv_obj_add_event_cb(fl_dd, [](lv_event_t* e) {
             char buf[32];
             lv_dropdown_get_selected_str(lv_event_get_target_obj(e), buf, sizeof(buf));
@@ -2206,7 +2250,7 @@ static lv_obj_t* build_content_screen()
     lv_dropdown_set_selected(cg_dd, s_settings.chars_group);
     lv_obj_set_width(cg_dd, CTL_W);
     lv_obj_set_pos(cg_dd, CTL_X, cur_y + 2);
-    lv_group_add_obj(s_content_group, cg_dd);
+    group_add(s_content_group, cg_dd);
     lv_obj_add_event_cb(cg_dd, [](lv_event_t* e) {
         s_settings.chars_group = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
@@ -2225,7 +2269,7 @@ static lv_obj_t* build_content_screen()
     lv_spinbox_set_value(koch_spn, s_settings.koch_lesson);
     lv_obj_set_width(koch_spn, SPN_W);
     lv_obj_set_pos(koch_spn, CTL_X, cur_y + 2);
-    lv_group_add_obj(s_content_group, koch_spn);
+    group_add(s_content_group, koch_spn);
     lv_obj_add_event_cb(koch_spn, [](lv_event_t* e) {
         s_settings.koch_lesson = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
@@ -2244,7 +2288,7 @@ static lv_obj_t* build_content_screen()
                                              s_settings.koch_order));
     lv_obj_set_width(ko_dd, CTL_W);
     lv_obj_set_pos(ko_dd, CTL_X, cur_y + 2);
-    lv_group_add_obj(s_content_group, ko_dd);
+    group_add(s_content_group, ko_dd);
     lv_obj_add_event_cb(ko_dd, [](lv_event_t* e) {
         s_settings.koch_order = (uint8_t)lv_dropdown_get_selected(
             lv_event_get_target_obj(e));
@@ -2263,7 +2307,7 @@ static lv_obj_t* build_content_screen()
     lv_spinbox_set_value(ml_spn, s_settings.word_max_length);
     lv_obj_set_width(ml_spn, SPN_W);
     lv_obj_set_pos(ml_spn, CTL_X, cur_y + 2);
-    lv_group_add_obj(s_content_group, ml_spn);
+    group_add(s_content_group, ml_spn);
     lv_obj_add_event_cb(ml_spn, [](lv_event_t* e) {
         s_settings.word_max_length = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
@@ -2282,7 +2326,7 @@ static lv_obj_t* build_content_screen()
     lv_spinbox_set_value(qw_spn, s_settings.qso_max_words);
     lv_obj_set_width(qw_spn, SPN_W);
     lv_obj_set_pos(qw_spn, CTL_X, cur_y + 2);
-    lv_group_add_obj(s_content_group, qw_spn);
+    group_add(s_content_group, qw_spn);
     lv_obj_add_event_cb(qw_spn, [](lv_event_t* e) {
         s_settings.qso_max_words = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
@@ -2301,7 +2345,7 @@ static lv_obj_t* build_content_screen()
     lv_spinbox_set_value(ss_spn, s_settings.session_size);
     lv_obj_set_width(ss_spn, SPN_W);
     lv_obj_set_pos(ss_spn, CTL_X, cur_y + 2);
-    lv_group_add_obj(s_content_group, ss_spn);
+    group_add(s_content_group, ss_spn);
     lv_obj_add_event_cb(ss_spn, [](lv_event_t* e) {
         s_settings.session_size = (uint8_t)lv_spinbox_get_value(
             lv_event_get_target_obj(e));
@@ -2337,7 +2381,7 @@ static lv_obj_t* build_wifi_screen()
 
     lv_coord_t y0 = content_y() + 4;
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     bool connected = s_network && s_network->wifi_is_connected();
 
     if (connected) {
@@ -2348,12 +2392,16 @@ static lv_obj_t* build_wifi_screen()
         char url[48];
         snprintf(url, sizeof(url), "http://%s/", ip);
 
-        // Reserve space for disconnect button at bottom
-        lv_coord_t btn_h = lv_font_get_line_height(menu_font()) + 12; // padding
-        lv_coord_t qr_max = SCREEN_H - y0 - btn_h - 8; // 8px gap
-        lv_obj_t* qr = qr_canvas_create(scr, url, qr_max);
-        lv_coord_t qr_side = qr ? ((qr_max / 33) * 33) : 0;
-        if (qr) lv_obj_set_pos(qr, 4, y0);
+        // QR code — only if screen is large enough to be scannable
+        lv_coord_t btn_h = lv_font_get_line_height(menu_font()) + 12;
+        lv_coord_t qr_max = SCREEN_H - y0 - btn_h - 8;
+        lv_obj_t* qr = nullptr;
+        lv_coord_t qr_side = 0;
+        if (qr_max >= 66) {  // minimum ~66px for a scannable QR code
+            qr = qr_canvas_create(scr, url, qr_max);
+            qr_side = qr ? ((qr_max / 33) * 33) : 0;
+            if (qr) lv_obj_set_pos(qr, 4, y0);
+        }
 
         lv_coord_t tx = qr ? (4 + qr_side + 8) : 8;
         lv_obj_t* info = lv_label_create(scr);
@@ -2372,7 +2420,7 @@ static lv_obj_t* build_wifi_screen()
         lv_label_set_text(disc_lbl, "Disconnect");
         lv_obj_set_style_text_font(disc_lbl, menu_font(), 0);
         lv_obj_align(disc_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
-        lv_group_add_obj(s_wifi_group, disc_btn);
+        group_add(s_wifi_group, disc_btn);
         lv_obj_add_event_cb(disc_btn, [](lv_event_t*) {
             if (s_network) {
                 web_server_stop();
@@ -2382,12 +2430,18 @@ static lv_obj_t* build_wifi_screen()
         }, LV_EVENT_CLICKED, nullptr);
     } else {
         // ── Not connected: show AP QR for captive portal ─────────────────
-        char qr_text[64];
-        snprintf(qr_text, sizeof(qr_text), "WIFI:S:%s;T:nopass;P:;;", s_ap_ssid);
-        static constexpr int32_t QR_MAX_PX = 130;
-        lv_obj_t* qr = qr_canvas_create(scr, qr_text, QR_MAX_PX);
-        lv_coord_t qr_side = qr ? ((QR_MAX_PX / 33) * 33) : 0;
-        if (qr) lv_obj_set_pos(qr, 4, y0);
+        // QR code — only if screen is large enough to be scannable
+        lv_obj_t* qr = nullptr;
+        lv_coord_t qr_side = 0;
+        lv_coord_t qr_avail = SCREEN_H - y0 - 8;
+        if (qr_avail >= 66) {
+            int32_t qr_px = (qr_avail < 130) ? qr_avail : 130;
+            char qr_text[64];
+            snprintf(qr_text, sizeof(qr_text), "WIFI:S:%s;T:nopass;P:;;", s_ap_ssid);
+            qr = qr_canvas_create(scr, qr_text, qr_px);
+            qr_side = qr ? ((qr_px / 33) * 33) : 0;
+            if (qr) lv_obj_set_pos(qr, 4, y0);
+        }
 
         lv_coord_t tx = qr ? (4 + qr_side + 8) : 8;
         lv_obj_t* info = lv_label_create(scr);
@@ -2420,11 +2474,11 @@ static lv_obj_t* build_wifi_screen()
     lv_label_set_text(lbl, "Back");
     lv_obj_set_style_text_font(lbl, menu_font(), 0);
     lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
-    lv_group_add_obj(s_wifi_group, btn);
+    group_add(s_wifi_group, btn);
     lv_obj_add_event_cb(btn, [](lv_event_t*) {
         s_stack.pop();
         if (s_stack.size() == 1)
-            lv_indev_set_group(s_enc_indev, s_menu_group);
+            set_enc_group(s_menu_group);
     }, LV_EVENT_CLICKED, nullptr);
 
     return scr;
@@ -2434,7 +2488,7 @@ static lv_obj_t* build_wifi_screen()
 // Called from the Disconnect button handler.
 static void wifi_start_portal_mode()
 {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     // Pop triggers leave_cb which cleans up portal/QR.
     s_stack.pop();
     // Re-select the WiFi menu item and "click" it to push a fresh WiFi screen.
@@ -2443,7 +2497,7 @@ static void wifi_start_portal_mode()
     lv_obj_t* ns = build_wifi_screen();
     s_stack.push(ns,
         []() {
-            lv_indev_set_group(s_enc_indev, s_wifi_group);
+            set_enc_group(s_wifi_group);
             // Try saved creds first (needed when wifi_autostart is off)
             ensure_wifi_connected();
             if (!s_network || !s_network->wifi_is_connected()) {
@@ -2548,7 +2602,7 @@ static void inet_cw_connect()
     s_stack.push(cw_scr,
         []() {
             // Encoder → WPM on the active CW screen
-            lv_indev_set_group(s_enc_indev, nullptr);
+            set_enc_group(nullptr);
         },
         []() {
             // Popping back to settings screen — disconnect + cleanup
@@ -2629,7 +2683,7 @@ static lv_obj_t* build_inet_cw_screen()
             }
         }
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_group_add_obj(s_inet_group, s_inet_proto_dd);
+    group_add(s_inet_group, s_inet_proto_dd);
 
     y += 34;
 
@@ -2651,7 +2705,7 @@ static lv_obj_t* build_inet_cw_screen()
             (uint16_t)lv_spinbox_get_value(lv_event_get_target_obj(e));
         save_settings();
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_group_add_obj(s_inet_group, s_inet_wire_spin);
+    group_add(s_inet_group, s_inet_wire_spin);
 
     if (s_settings.inet_proto != 0) {
         lv_obj_add_flag(s_inet_wire_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -2677,7 +2731,7 @@ static lv_obj_t* build_inet_cw_screen()
     lv_obj_add_event_cb(s_inet_connect_btn, [](lv_event_t*) {
         inet_cw_connect();
     }, LV_EVENT_CLICKED, nullptr);
-    lv_group_add_obj(s_inet_group, s_inet_connect_btn);
+    group_add(s_inet_group, s_inet_connect_btn);
 
     return scr;
 }
@@ -2724,7 +2778,7 @@ static lv_obj_t* build_inet_cw_active_screen()
 
 // ── Key event router ───────────────────────────────────────────────────────
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 // ── route_cw(): runs on the dedicated CW task (Core 1, priority 10) ──────
 // Only handles CW-related events: touch paddles, external paddles, straight
 // key.  Must NOT call any LVGL or MorseTrainer functions.
@@ -2873,7 +2927,7 @@ static void route_ui(KeyEvent ev)
             } else {
                 s_stack.pop();
                 if (s_stack.size() == 1)
-                    lv_indev_set_group(s_enc_indev, s_menu_group);
+                    set_enc_group(s_menu_group);
             }
             break;
         }
@@ -2899,10 +2953,10 @@ static void route_ui(KeyEvent ev)
             break;
     }
 }
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED
 
 // ── route(): single-threaded path used by simulator ──────────────────────
-#ifndef BOARD_POCKETWROOM
+#ifndef BOARD_EMBEDDED
 static void route(KeyEvent ev)
 {
     reset_activity_timer();
@@ -2978,7 +3032,7 @@ static void route(KeyEvent ev)
             } else {
                 s_stack.pop();
                 if (s_stack.size() == 1)
-                    lv_indev_set_group(s_enc_indev, s_menu_group);
+                    set_enc_group(s_menu_group);
             }
             break;
         }
@@ -3072,10 +3126,10 @@ static void route(KeyEvent ev)
             break;
     }
 }
-#endif // !BOARD_POCKETWROOM
+#endif // !BOARD_EMBEDDED
 
 // ── CW task infrastructure (pocketwroom only) ───────────────────────────
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
 // Decoder callback for CW task context — enqueues decoded symbols for the
 // UI task instead of touching LVGL directly.
 static void on_letter_decoded_cw(const std::string& letter)
@@ -3122,7 +3176,7 @@ static void cw_task_body(void* /*arg*/)
         }
     }
 }
-#endif // BOARD_POCKETWROOM
+#endif // BOARD_EMBEDDED
 
 // ── Shared CW engine + trainer + LVGL init ────────────────────────────────
 // Call after s_audio and s_keys are assigned.
@@ -3132,7 +3186,7 @@ static void app_ui_init(uint32_t rng_seed)
     unsigned long dit_ms = 1200u / (unsigned long)s_settings.wpm;
     s_rng.seed(rng_seed);
     s_gen     = new TextGenerators(s_rng);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     s_decoder = new MorseDecoder(dit_ms * 2, on_letter_decoded_cw, app_millis);
 #else
     s_decoder = new MorseDecoder(dit_ms * 2, on_letter_decoded, app_millis);
@@ -3147,12 +3201,12 @@ static void app_ui_init(uint32_t rng_seed)
         [](bool on) {
             if (on) {
                 s_audio->tone_on(s_settings.freq_hz);
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
                 digitalWrite(PIN_KEYER, HIGH);
 #endif
             } else {
                 s_audio->tone_off();
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
                 digitalWrite(PIN_KEYER, LOW);
 #endif
             }
@@ -3273,13 +3327,7 @@ static void app_ui_init(uint32_t rng_seed)
 
     s_stack.push(build_main_menu(),
         []() {
-            lv_indev_set_group(s_enc_indev, s_menu_group);
-            // Apply focus-key state so the first item is highlighted
-            // immediately.  Normally LVGL only sets this during encoder
-            // indev processing, so without actual input the highlight
-            // would be missing on the first frame.
-            lv_obj_t* f = lv_group_get_focused(s_menu_group);
-            if (f) lv_obj_add_state(f, LV_STATE_FOCUS_KEY);
+            set_enc_group(s_menu_group);
         },
         {});
 
@@ -3291,7 +3339,7 @@ static void app_ui_init(uint32_t rng_seed)
         push_mode_screen(s_settings.last_mode);
     }
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     // Create cross-task queues and launch the dedicated CW task.
     // Must be last — CW task immediately starts consuming PocketKeyInput.
     s_ui_event_queue      = xQueueCreate(32, sizeof(KeyEvent));
@@ -3364,23 +3412,29 @@ static lv_obj_t* build_invaders_screen()
     lv_obj_set_pos(game_area, 0, y0);
 
     // Bottom strip: chained colored labels (each positioned relative to previous)
+    // On monochrome/low-depth displays, use white for all HUD text.
+    auto hud_col = [](uint32_t rgb) -> lv_color_t {
+        return (LV_COLOR_DEPTH <= 8) ? lv_color_hex(0xFFFFFF)
+                                     : lv_color_hex(rgb);
+    };
+
     s_inv_level_lbl = lv_label_create(scr);
     lv_label_set_text(s_inv_level_lbl, "Lv1 ");
     lv_obj_set_style_text_font(s_inv_level_lbl, ui_font(), 0);
-    lv_obj_set_style_text_color(s_inv_level_lbl, lv_color_hex(0x88FF88), 0);
+    lv_obj_set_style_text_color(s_inv_level_lbl, hud_col(0x88FF88), 0);
     lv_obj_align(s_inv_level_lbl, LV_ALIGN_BOTTOM_LEFT, 4, 0);
 
     s_inv_lives_lbl = lv_label_create(scr);
     lv_label_set_text(s_inv_lives_lbl, "x3 ");
     lv_obj_set_style_text_font(s_inv_lives_lbl, ui_font(), 0);
-    lv_obj_set_style_text_color(s_inv_lives_lbl, lv_color_hex(0xFF4444), 0);
+    lv_obj_set_style_text_color(s_inv_lives_lbl, hud_col(0xFF4444), 0);
     lv_obj_align_to(s_inv_lives_lbl, s_inv_level_lbl,
                     LV_ALIGN_OUT_RIGHT_MID, 0, 0);
 
     s_inv_score_lbl = lv_label_create(scr);
     lv_label_set_text(s_inv_score_lbl, "0000 ");
     lv_obj_set_style_text_font(s_inv_score_lbl, ui_font(), 0);
-    lv_obj_set_style_text_color(s_inv_score_lbl, lv_color_hex(0xFFFF00), 0);
+    lv_obj_set_style_text_color(s_inv_score_lbl, hud_col(0xFFFF00), 0);
     lv_obj_align_to(s_inv_score_lbl, s_inv_lives_lbl,
                     LV_ALIGN_OUT_RIGHT_MID, 0, 0);
 
@@ -3390,7 +3444,7 @@ static lv_obj_t* build_invaders_screen()
         s_inv_wpm_lbl = lv_label_create(scr);
         lv_label_set_text(s_inv_wpm_lbl, wbuf);
         lv_obj_set_style_text_font(s_inv_wpm_lbl, ui_font(), 0);
-        lv_obj_set_style_text_color(s_inv_wpm_lbl, lv_color_hex(0xCCCCCC), 0);
+        lv_obj_set_style_text_color(s_inv_wpm_lbl, hud_col(0xCCCCCC), 0);
         lv_obj_align_to(s_inv_wpm_lbl, s_inv_score_lbl,
                         LV_ALIGN_OUT_RIGHT_MID, 0, 0);
     }
@@ -3398,14 +3452,14 @@ static lv_obj_t* build_invaders_screen()
     s_inv_input_lbl = lv_label_create(scr);
     lv_label_set_text(s_inv_input_lbl, "");
     lv_obj_set_style_text_font(s_inv_input_lbl, ui_font(), 0);
-    lv_obj_set_style_text_color(s_inv_input_lbl, lv_color_hex(0x88CCFF), 0);
+    lv_obj_set_style_text_color(s_inv_input_lbl, hud_col(0x88CCFF), 0);
     lv_obj_align(s_inv_input_lbl, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
 
     // Game-over label (hidden initially)
     s_inv_gameover_lbl = lv_label_create(game_area);
     lv_label_set_text(s_inv_gameover_lbl, "GAME OVER");
     lv_obj_set_style_text_font(s_inv_gameover_lbl, cw_text_font(), 0);
-    lv_obj_set_style_text_color(s_inv_gameover_lbl, lv_color_hex(0xFF4444), 0);
+    lv_obj_set_style_text_color(s_inv_gameover_lbl, hud_col(0xFF4444), 0);
     lv_obj_set_style_text_align(s_inv_gameover_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(s_inv_gameover_lbl);
     lv_obj_add_flag(s_inv_gameover_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -3825,7 +3879,7 @@ static void app_ui_tick()
 {
     s_audio->poll();
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     // ── WiFi portal: deferred start (scan + AP + server) ────────────────
     if (s_wifi_portal_pending && s_network && !s_portal) {
         s_wifi_portal_pending = false;
@@ -3911,7 +3965,7 @@ static void app_ui_tick()
         // Single press while in scroll mode is ignored
     }
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     // ── Drain decoded symbols from CW task ──────────────────────────────
     {
         DecodedSymbol sym;
@@ -4022,7 +4076,7 @@ static void app_ui_tick()
 
     // CW Decoder: update signal level bar and WPM estimate
     if (s_active_mode == ActiveMode::DECODER) {
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
         if (s_dec_bar)
             lv_bar_set_value(s_dec_bar, s_decoder_signal_level, LV_ANIM_OFF);
         if (s_dec_wpm_lbl) {
@@ -4045,12 +4099,12 @@ static void app_ui_tick()
                 // "home" — pop back to main menu
                 while (s_stack.size() > 1)
                     s_stack.pop();
-                lv_indev_set_group(s_enc_indev, s_menu_group);
+                set_enc_group(s_menu_group);
             } else {
                 // Pop to home first, then push requested mode
                 while (s_stack.size() > 1)
                     s_stack.pop();
-                lv_indev_set_group(s_enc_indev, s_menu_group);
+                set_enc_group(s_menu_group);
                 push_mode_screen(idx);
             }
         }
@@ -4108,7 +4162,7 @@ static void app_ui_tick()
         }
     }
 
-#ifdef BOARD_POCKETWROOM
+#ifdef BOARD_EMBEDDED
     web_server_update();
 #endif
 }
